@@ -1,0 +1,13 @@
+/target
+node_modules/
+web/node_modules/
+dist/
+web/dist/
+web/src/lib/wasm/*.wasm
+web/src/lib/wasm/*.js
+web/src/lib/wasm/*.d.ts
+web/src/lib/wasm/*.json
+.DS_Store
+*.log
+.env
+.env.local

@@ -1,0 +1,23 @@
+[package]
+name = "multilevelos-wasm"
+description = "WebAssembly bindings for multilevelos cycling level of service engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+multilevelos-core = { path = "../../crates/multilevelos-core" }
+geo.workspace = true
+geo-types.workspace = true
+geojson.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+log.workspace = true
+console_log = "1.0"
+getrandom = { workspace = true }

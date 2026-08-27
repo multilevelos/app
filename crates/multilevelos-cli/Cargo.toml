@@ -1,0 +1,14 @@
+[package]
+name = "multilevelos-cli"
+description = "Command-line tool for cycling Level of Service (LoS) estimation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+multilevelos-core = { path = "../multilevelos-core" }
+serde.workspace = true
+serde_json.workspace = true
+geojson.workspace = true
+anyhow.workspace = true

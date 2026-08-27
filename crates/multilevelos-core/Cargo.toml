@@ -1,0 +1,21 @@
+[package]
+name = "multilevelos-core"
+description = "Core OpenStreetMap cycling level of service (LoS) and AADT estimation engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+geo.workspace = true
+geo-types.workspace = true
+geojson.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rstar.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+approx = "0.5"
