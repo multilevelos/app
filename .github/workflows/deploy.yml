@@ -11,9 +11,11 @@ permissions:
   pages: write
   id-token: write
 
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow the deployment to complete.
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -30,17 +32,20 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Run Core Tests
+        run: cargo test --verbose
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Build WebAssembly core
         run: |
-          cd bindings/wasm
-          wasm-pack build --release --target bundler --out-dir ../../web/src/lib/wasm
+          chmod +x ./scripts/build-wasm.sh
+          ./scripts/build-wasm.sh
 
       - name: Install Web dependencies
         run: |
