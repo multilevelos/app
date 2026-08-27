@@ -3,7 +3,7 @@
   import type { FeatureCollection } from 'geojson';
   import type { ColorMode, LosConfig, PresetLocation, SearchResult, SummaryStats } from './types';
   import { engineInstance, ensureWasmInitialized } from './lib/engine';
-  import { fetchOsmNetworkForBbox } from './lib/overpass';
+  import { fetchOsmNetworkForBbox, sanitizeBbox } from './lib/overpass';
   import MapContainer from './lib/map/MapContainer.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import Legend from './lib/components/Legend.svelte';
@@ -15,8 +15,18 @@
   let isLoading = $state(true);
   let loadingMessage = $state('Initializing WebAssembly engine...');
   let rawOsmJson = $state<string | null>(null);
+  let notificationToast = $state<string | null>(null);
+  let toastTimeout: any = null;
 
   let mapComponent: MapContainer;
+
+  function showToast(msg: string, durationMs: number = 4000) {
+    if (toastTimeout) clearTimeout(toastTimeout);
+    notificationToast = msg;
+    toastTimeout = setTimeout(() => {
+      notificationToast = null;
+    }, durationMs);
+  }
 
   onMount(async () => {
     try {
@@ -67,6 +77,7 @@
       if (mapComponent) {
         mapComponent.flyToBounds(preset.bbox);
       }
+      showToast(`Loaded ${preset.name}: ${result.segments_count} segments (${result.summary.total_length_km} km)`);
     } catch (err: any) {
       console.error('Failed to load preset:', err);
       alert(`Could not load preset ${preset.name}: ${err.message}`);
@@ -77,36 +88,38 @@
 
   async function handleFetchViewport() {
     if (!mapComponent) return;
-    const bbox = mapComponent.getMapBounds();
-    if (!bbox) return;
+    const rawBbox = mapComponent.getMapBounds();
+    if (!rawBbox) return;
 
-    // Check bbox span to prevent downloading entire continent by accident
-    const dLng = Math.abs(bbox[2] - bbox[0]);
-    const dLat = Math.abs(bbox[3] - bbox[1]);
-
-    if (dLng > 0.15 || dLat > 0.15) {
-      const proceed = confirm(
-        'The visible map area is quite large and might take longer to download. Do you want to continue?'
-      );
-      if (!proceed) return;
-    }
+    const [minLng, minLat, maxLng, maxLat] = sanitizeBbox(
+      rawBbox[0],
+      rawBbox[1],
+      rawBbox[2],
+      rawBbox[3]
+    );
 
     isLoading = true;
-    loadingMessage = 'Querying OpenStreetMap Overpass API for visible view...';
+    loadingMessage = `Querying OpenStreetMap Overpass API for area [${minLat.toFixed(3)}, ${minLng.toFixed(3)}]...`;
 
     try {
-      const osmText = await fetchOsmNetworkForBbox(bbox[0], bbox[1], bbox[2], bbox[3]);
+      const osmText = await fetchOsmNetworkForBbox(minLng, minLat, maxLng, maxLat);
       rawOsmJson = osmText;
 
-      loadingMessage = 'Running Cycling by Design Level of Service analysis...';
+      loadingMessage = 'Running Cycling by Design Level of Service analysis in Rust...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
       geojson = result.geojson;
       summary = result.summary;
+
+      if (result.segments_count === 0) {
+        alert('No highway/cycleway segments found in this area. Try zooming into a populated town or city.');
+      } else {
+        showToast(`Fetched OSM data: ${result.segments_count} segments (${result.summary.total_length_km} km analyzed)`);
+      }
     } catch (err: any) {
       console.error('Fetch viewport error:', err);
-      alert(`Overpass download failed: ${err.message}`);
+      alert(`Overpass download failed: ${err.message || err}. Please try again in a few seconds.`);
     } finally {
       isLoading = false;
     }
@@ -121,36 +134,18 @@
     const centerLng = parseFloat(result.lon);
     const centerLat = parseFloat(result.lat);
 
-    // Limit bbox size if boundingbox is a giant country/state
-    const dLng = Math.abs(maxLng - minLng);
-    const dLat = Math.abs(maxLat - minLat);
-
-    let queryBbox: [number, number, number, number] = [minLng, minLat, maxLng, maxLat];
-
-    if (dLng > 0.08 || dLat > 0.08) {
-      // Zoom into a 4km city-center bounding box around center
-      queryBbox = [
-        centerLng - 0.025,
-        centerLat - 0.02,
-        centerLng + 0.025,
-        centerLat + 0.02
-      ];
-    }
+    const [w, s, e, n] = sanitizeBbox(minLng, minLat, maxLng, maxLat, 0.05);
 
     if (mapComponent) {
-      mapComponent.flyToBounds(queryBbox);
+      mapComponent.flyToBounds([w, s, e, n]);
     }
 
     isLoading = true;
-    loadingMessage = `Downloading OSM network for ${result.display_name.split(',')[0]}...`;
+    const name = result.display_name.split(',')[0];
+    loadingMessage = `Downloading OSM network for ${name}...`;
 
     try {
-      const osmText = await fetchOsmNetworkForBbox(
-        queryBbox[0],
-        queryBbox[1],
-        queryBbox[2],
-        queryBbox[3]
-      );
+      const osmText = await fetchOsmNetworkForBbox(w, s, e, n);
       rawOsmJson = osmText;
 
       loadingMessage = 'Computing Level of Service in Rust WebAssembly...';
@@ -159,9 +154,11 @@
       const res = engineInstance.calculateLos(config);
       geojson = res.geojson;
       summary = res.summary;
+
+      showToast(`Loaded ${name}: ${res.segments_count} segments (${res.summary.total_length_km} km)`);
     } catch (err: any) {
       console.error('Search load error:', err);
-      alert(`Failed to fetch OSM data: ${err.message}`);
+      alert(`Failed to fetch OSM data for ${name}: ${err.message}`);
     } finally {
       isLoading = false;
     }
@@ -175,7 +172,7 @@
       const osmText = await file.text();
       rawOsmJson = osmText;
 
-      loadingMessage = 'Parsing OSM data & calculating Level of Service...';
+      loadingMessage = 'Parsing OSM data & calculating Level of Service in Rust...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
@@ -199,6 +196,7 @@
           mapComponent.flyToBounds([minX, minY, maxX, maxY]);
         }
       }
+      showToast(`Loaded ${file.name}: ${result.segments_count} segments (${result.summary.total_length_km} km)`);
     } catch (err: any) {
       console.error('File upload error:', err);
       alert(`Invalid OSM file: ${err.message}`);
@@ -221,6 +219,7 @@
   function handleResetConfig() {
     config = engineInstance.getDefaultConfig();
     handleConfigChange();
+    showToast('Reset parameters to Scottish Cycling by Design defaults');
   }
 
   function handleExportGeoJSON() {
@@ -286,6 +285,7 @@
       bind:this={mapComponent}
       {geojson}
       {colorMode}
+      {isLoading}
       onFetchViewport={handleFetchViewport}
     />
 
@@ -293,6 +293,16 @@
     <div class="legend-overlay">
       <Legend {colorMode} />
     </div>
+
+    <!-- Notification Toast -->
+    {#if notificationToast}
+      <div class="toast-popup">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+        <span>{notificationToast}</span>
+      </div>
+    {/if}
   </div>
 </main>
 
@@ -318,5 +328,30 @@
     left: 20px;
     z-index: 10;
     pointer-events: none;
+  }
+
+  .toast-popup {
+    position: absolute;
+    top: 16px;
+    right: 56px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(10px);
+    border: 1px solid #16a34a;
+    color: #f8fafc;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    z-index: 20;
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>

@@ -7,18 +7,19 @@
   let {
     geojson = null,
     colorMode = 'los',
+    isLoading = false,
     onFetchViewport = () => {},
     onSelectSegment = (segment: any) => {}
   }: {
     geojson: FeatureCollection | null;
     colorMode: ColorMode;
+    isLoading?: boolean;
     onFetchViewport?: () => void;
     onSelectSegment?: (segment: any) => void;
   } = $props();
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | null = null;
-  let hoveredFeatureId: string | number | null = null;
   let popup: maplibregl.Popup | null = null;
 
   const BASEMAP_STYLES = {
@@ -57,7 +58,7 @@
       }
     });
 
-    map.on('mousemove', 'los-network-lines', (e) => {
+    map.on('mousemove', 'los-network-lines', () => {
       if (!map) return;
       map.getCanvas().style.cursor = 'pointer';
     });
@@ -122,7 +123,7 @@
   });
 
   function initLayers() {
-    if (!map) return;
+    if (!map || !map.isStyleLoaded()) return;
 
     if (!map.getSource('los-network')) {
       map.addSource('los-network', {
@@ -146,11 +147,11 @@
             'interpolate',
             ['linear'],
             ['zoom'],
-            12, 3.5,
-            15, 6,
-            18, 9
+            11, 2.5,
+            14, 5.0,
+            17, 8.5
           ],
-          'line-opacity': 0.8
+          'line-opacity': 0.75
         }
       });
     }
@@ -216,9 +217,9 @@
         'interpolate',
         ['linear'],
         ['zoom'],
-        12, 2.0,
-        15, 3.8,
-        18, 6.5
+        11, 2.0,
+        14, 3.8,
+        17, 6.5
       ],
       'line-opacity': 0.95
     };
@@ -226,6 +227,11 @@
 
   function updateSource(data: FeatureCollection | null) {
     if (!map) return;
+    if (!map.isStyleLoaded()) {
+      map.once('style.load', () => updateSource(data));
+      return;
+    }
+    initLayers();
     const src = map.getSource('los-network') as maplibregl.GeoJSONSource | undefined;
     if (src) {
       src.setData(data || { type: 'FeatureCollection', features: [] });
@@ -233,7 +239,7 @@
   }
 
   $effect(() => {
-    if (map && map.isStyleLoaded()) {
+    if (geojson) {
       updateSource(geojson);
     }
   });
@@ -308,14 +314,19 @@
       </button>
     </div>
 
-    <button class="btn-fetch-view" onclick={onFetchViewport}>
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-        <path d="M3 3v5h5"/>
-        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
-        <path d="M16 16h5v5"/>
-      </svg>
-      Fetch OSM for Visible View
+    <button class="btn-fetch-view {isLoading ? 'fetching' : ''}" onclick={onFetchViewport} disabled={isLoading}>
+      {#if isLoading}
+        <div class="spinner-sm"></div>
+        Downloading OSM...
+      {:else}
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+          <path d="M16 16h5v5"/>
+        </svg>
+        Fetch OSM for Visible View
+      {/if}
     </button>
   </div>
 </div>
@@ -394,10 +405,24 @@
     transition: all 0.2s ease;
   }
 
-  .btn-fetch-view:hover {
+  .btn-fetch-view:hover:not(:disabled) {
     background: #0284c7;
     color: #ffffff;
     transform: translateY(-1px);
     box-shadow: 0 6px 12px rgba(2, 132, 199, 0.35);
+  }
+
+  .btn-fetch-view:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  .spinner-sm {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
 </style>

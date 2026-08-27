@@ -1,11 +1,12 @@
 export const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://z.overpass-api.de/api/interpreter',
+  'https://overpass-api.de/api/interpreter'
 ];
 
 /**
- * Execute Overpass query with automatic retry across fallback endpoints
+ * Execute Overpass query with automatic retry across reliable mirror endpoints
  */
 async function executeOverpassQuery(query: string): Promise<string> {
   let lastError: Error | null = null;
@@ -13,12 +14,13 @@ async function executeOverpassQuery(query: string): Promise<string> {
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 40000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'Accept': 'application/json'
         },
         body: `data=${encodeURIComponent(query)}`,
         signal: controller.signal
@@ -27,7 +29,15 @@ async function executeOverpassQuery(query: string): Promise<string> {
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        return await response.text();
+        const text = await response.text();
+        // Verify it is not an error payload
+        if (text.startsWith('{') && text.includes('"elements"')) {
+          return text;
+        } else if (text.includes('runtime error') || text.includes('rate_limited')) {
+          lastError = new Error(`Overpass runtime limit on ${endpoint}`);
+          continue;
+        }
+        return text;
       } else {
         lastError = new Error(`HTTP ${response.status} from ${endpoint}`);
       }
@@ -40,6 +50,42 @@ async function executeOverpassQuery(query: string): Promise<string> {
 }
 
 /**
+ * Sanitizes and bounds a bbox to a manageable size (max ~6km span) to prevent Overpass timeouts
+ */
+export function sanitizeBbox(
+  minLng: number,
+  minLat: number,
+  maxLng: number,
+  maxLat: number,
+  maxSpanDeg: number = 0.06
+): [number, number, number, number] {
+  let s = Math.min(minLat, maxLat);
+  let n = Math.max(minLat, maxLat);
+  let w = Math.min(minLng, maxLng);
+  let e = Math.max(minLng, maxLng);
+
+  const spanLat = n - s;
+  const spanLng = e - w;
+
+  if (spanLat > maxSpanDeg || spanLng > maxSpanDeg) {
+    const centerLat = (s + n) / 2;
+    const centerLng = (w + e) / 2;
+    const halfSpan = maxSpanDeg / 2;
+    s = centerLat - halfSpan;
+    n = centerLat + halfSpan;
+    w = centerLng - halfSpan;
+    e = centerLng + halfSpan;
+  }
+
+  return [
+    parseFloat(w.toFixed(5)),
+    parseFloat(s.toFixed(5)),
+    parseFloat(e.toFixed(5)),
+    parseFloat(n.toFixed(5))
+  ];
+}
+
+/**
  * Fetch routable OSM road and cycle network for a given bounding box
  */
 export async function fetchOsmNetworkForBbox(
@@ -48,10 +94,12 @@ export async function fetchOsmNetworkForBbox(
   maxLng: number,
   maxLat: number
 ): Promise<string> {
-  const query = `[out:json][timeout:35];
+  const [w, s, e, n] = sanitizeBbox(minLng, minLat, maxLng, maxLat);
+
+  const query = `[out:json][timeout:25];
 (
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps"](${minLat},${minLng},${maxLat},${maxLng});
-  way["cycleway"](${minLat},${minLng},${maxLat},${maxLng});
+  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps|raceway"](${s},${w},${n},${e});
+  way["cycleway"](${s},${w},${n},${e});
 );
 out body;
 >;
@@ -68,10 +116,14 @@ export async function fetchOsmNetworkAroundPoint(
   lat: number,
   radiusMeters: number = 2500
 ): Promise<string> {
-  const query = `[out:json][timeout:35];
+  const cleanRadius = Math.min(radiusMeters, 4000);
+  const cleanLat = lat.toFixed(5);
+  const cleanLng = lng.toFixed(5);
+
+  const query = `[out:json][timeout:25];
 (
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps"](around:${radiusMeters},${lat},${lng});
-  way["cycleway"](around:${radiusMeters},${lat},${lng});
+  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps|raceway"](around:${cleanRadius},${cleanLat},${cleanLng});
+  way["cycleway"](around:${cleanRadius},${cleanLat},${cleanLng});
 );
 out body;
 >;
