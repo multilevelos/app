@@ -29,6 +29,8 @@
   import MapContainer from './lib/map/MapContainer.svelte';
 
   const initialUrl = readUrlState();
+  const hadInitialMapHash =
+    typeof window !== 'undefined' && window.location.hash.includes('map=');
   const isMobileInit = typeof window !== 'undefined' && window.innerWidth <= 768;
 
   const baseConfig = engineInstance.getDefaultConfig();
@@ -172,14 +174,13 @@
   });
 
   onMount(async () => {
-    const hadMapHash = window.location.hash.includes('map=');
     try {
       loadingMessage = 'Compiling WebAssembly modules...';
       await ensureWasmInitialized();
 
       const startPreset =
         PRESET_LOCATIONS.find((p) => p.id === selectedPresetId) ?? PRESET_LOCATIONS[0];
-      await loadPreset(startPreset, hadMapHash);
+      await loadPreset(startPreset, hadInitialMapHash);
     } catch (err: any) {
       console.error('Initialization error:', err);
       notify(`Engine initialization failed: ${err?.message || err}`, 'error', 6500);
