@@ -19,7 +19,7 @@
     { id: 'light', label: 'Light Canvas', description: 'Clean civic greyscale cartography' },
     { id: 'dark', label: 'Dark Canvas', description: 'Muted dark street backdrop' },
     { id: 'voyager', label: 'Streets', description: 'Detailed urban street map' },
-    { id: 'opencyclemap', label: 'OpenCycleMap', description: 'NCN routes & elevation contours' },
+    { id: 'cyclosm', label: 'CyclOSM', description: 'Active travel routes, surfaces & contours' },
     { id: 'satellite', label: 'Satellite', description: 'High-resolution aerial imagery' }
   ];
 </script>

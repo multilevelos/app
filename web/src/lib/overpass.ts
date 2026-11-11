@@ -86,7 +86,7 @@ export function sanitizeBbox(
 }
 
 /**
- * Fetch routable OSM road and cycle network for a given bounding box
+ * Fetch routable OSM street, walking, wheeling & cycling network + tagged crossings/signals for a bounding box
  */
 export async function fetchOsmNetworkForBbox(
   minLng: number,
@@ -98,8 +98,9 @@ export async function fetchOsmNetworkForBbox(
 
   const query = `[out:json][timeout:25];
 (
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps|raceway"](${s},${w},${n},${e});
+  way["highway"]["highway"!~"proposed|construction|corridor|elevator|raceway"](${s},${w},${n},${e});
   way["cycleway"](${s},${w},${n},${e});
+  node["highway"~"crossing|traffic_signals|mini_roundabout"](${s},${w},${n},${e});
 );
 out body;
 >;
@@ -122,8 +123,9 @@ export async function fetchOsmNetworkAroundPoint(
 
   const query = `[out:json][timeout:25];
 (
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|steps|raceway"](around:${cleanRadius},${cleanLat},${cleanLng});
+  way["highway"]["highway"!~"proposed|construction|corridor|elevator|raceway"](around:${cleanRadius},${cleanLat},${cleanLng});
   way["cycleway"](around:${cleanRadius},${cleanLat},${cleanLng});
+  node["highway"~"crossing|traffic_signals|mini_roundabout"](around:${cleanRadius},${cleanLat},${cleanLng});
 );
 out body;
 >;

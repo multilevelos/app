@@ -1,5 +1,12 @@
 import type { Feature } from 'geojson';
-import type { ColorMode, LegendMetricRow, PresetLocation, SummaryStats } from '../types';
+import type {
+  ColorMode,
+  DesignStandard,
+  LegendMetricRow,
+  PresetLocation,
+  SummaryStats,
+  TravelMode
+} from '../types';
 
 export type BadgeTone = 'success' | 'warning' | 'danger' | 'purple' | 'civic' | 'neutral';
 
@@ -29,7 +36,7 @@ export const PRESET_LOCATIONS: PresetLocation[] = [
     id: 'edinburgh',
     name: 'Edinburgh (City Centre)',
     country: 'Scotland, UK',
-    description: 'Extensive 20mph network, off-road railway paths, and protected lanes.',
+    description: 'Extensive 20mph network, off-road railway paths, steps, and protected lanes.',
     center: [-3.195, 55.952],
     zoom: 14.5,
     bbox: [-3.22, 55.94, -3.17, 55.965]
@@ -38,7 +45,7 @@ export const PRESET_LOCATIONS: PresetLocation[] = [
     id: 'leeds',
     name: 'Leeds (University & Core)',
     country: 'England, UK',
-    description: 'Major urban corridors, high traffic arterials, and student routes.',
+    description: 'Major LTN 1/20 urban corridors, signalized junctions, and student routes.',
     center: [-1.55, 53.8],
     zoom: 14.5,
     bbox: [-1.575, 53.788, -1.525, 53.812]
@@ -57,64 +64,64 @@ export const PRESET_LOCATIONS: PresetLocation[] = [
 export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
   los: {
     id: 'los',
-    title: 'Level of Service (LoS)',
+    title: 'Multi-Modal Level of Service (A–E)',
     property: 'los_label',
-    fallbackColor: '#16a34a',
+    fallbackColor: '#059669',
     entries: [
       {
-        value: 'High',
-        label: 'High (LoS 3)',
-        desc: 'Suitable for all ages & abilities',
-        color: '#16a34a',
+        value: 'Grade A (Excellent)',
+        label: 'Grade A · Excellent',
+        desc: 'All ages & abilities quality',
+        color: '#059669',
         tone: 'success'
       },
       {
-        value: 'Medium',
-        label: 'Medium (LoS 2)',
-        desc: 'Acceptable for most users',
+        value: 'Grade B (Good)',
+        label: 'Grade B · Good',
+        desc: 'Low-stress active travel link',
+        color: '#65a30d',
+        tone: 'success'
+      },
+      {
+        value: 'Grade C (Moderate)',
+        label: 'Grade C · Moderate',
+        desc: 'Moderate stress or shared space',
         color: '#eab308',
         tone: 'warning'
       },
       {
-        value: 'Low',
-        label: 'Low (LoS 1)',
-        desc: 'High stress / narrow or busy',
+        value: 'Grade D (Poor)',
+        label: 'Grade D · Poor',
+        desc: 'High traffic exposure or constraint',
         color: '#f97316',
         tone: 'warning'
       },
       {
-        value: 'Should not be used (mixed traffic)',
-        label: 'Unsuitable (Mixed)',
-        desc: 'High-speed or high-flow mixing',
+        value: 'Grade E (Hostile / Barrier)',
+        label: 'Grade E · Hostile / Barrier',
+        desc: 'Unsuitable or inaccessible',
         color: '#dc2626',
         tone: 'danger'
-      },
-      {
-        value: 'Should not be used (non-compliant intervention)',
-        label: 'Non-Compliant',
-        desc: 'Substandard facility for road conditions',
-        color: '#9333ea',
-        tone: 'purple'
       }
     ]
   },
   infrastructure: {
     id: 'infrastructure',
-    title: 'Infrastructure Type',
+    title: 'Infrastructure & Facility Type',
     property: 'infrastructure',
     fallbackColor: '#64748b',
     entries: [
       {
         value: 'Segregated Track (wide)',
         label: 'Segregated Track (wide)',
-        desc: 'Dedicated track >= min wide threshold',
+        desc: 'Protected cycleway >= wide threshold',
         color: '#059669',
         tone: 'success'
       },
       {
         value: 'Off Road Path',
         label: 'Off-Road Path',
-        desc: 'Greenway, towpath, or path away from traffic',
+        desc: 'Greenway, towpath, or park path away from traffic',
         color: '#16a34a',
         tone: 'success'
       },
@@ -126,9 +133,30 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
         tone: 'success'
       },
       {
+        value: 'Light Segregation',
+        label: 'Light Segregation',
+        desc: 'Stepped track, wands, bollards, or planters',
+        color: '#0d9488',
+        tone: 'success'
+      },
+      {
+        value: 'Bus / Shared Priority Lane',
+        label: 'Bus / Priority Lane',
+        desc: 'Dedicated bus & cycle priority lane',
+        color: '#0284c7',
+        tone: 'civic'
+      },
+      {
+        value: 'Pedestrian Footway / Zone',
+        label: 'Pedestrian Footway / Zone',
+        desc: 'Dedicated footway or pedestrianised street',
+        color: '#2563eb',
+        tone: 'civic'
+      },
+      {
         value: 'Shared Footway',
         label: 'Shared Footway',
-        desc: 'Shared pedestrian & active travel space',
+        desc: 'Shared pedestrian & cycling path',
         color: '#d97706',
         tone: 'warning'
       },
@@ -145,12 +173,19 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
         desc: 'General carriageway with no dedicated lane',
         color: '#64748b',
         tone: 'neutral'
+      },
+      {
+        value: 'Steps (Stepped Access)',
+        label: 'Steps (Stepped Access)',
+        desc: 'Walkable stairs — barrier for wheeling/cycling',
+        color: '#9333ea',
+        tone: 'purple'
       }
     ]
   },
   speed: {
     id: 'speed',
-    title: 'Speed Limit',
+    title: 'Effective Speed Limit',
     property: 'speed_category',
     fallbackColor: '#16a34a',
     entries: [
@@ -192,22 +227,83 @@ export function getFilterExpression(mode: ColorMode, hiddenValues: string[]): an
   return ['!', ['in', ['get', prop], ['literal', hiddenValues]]];
 }
 
+export function gradeColor(grade: string | undefined): string {
+  switch ((grade || '').trim().toUpperCase()) {
+    case 'A':
+      return '#059669';
+    case 'B':
+      return '#65a30d';
+    case 'C':
+      return '#eab308';
+    case 'D':
+      return '#f97316';
+    case 'E':
+      return '#dc2626';
+    default:
+      return '#64748b';
+  }
+}
+
+export function gradeTone(grade: string | undefined): BadgeTone {
+  switch ((grade || '').trim().toUpperCase()) {
+    case 'A':
+    case 'B':
+      return 'success';
+    case 'C':
+    case 'D':
+      return 'warning';
+    case 'E':
+      return 'danger';
+    default:
+      return 'civic';
+  }
+}
+
 export function getLosTone(losLabel: string | undefined, losScore?: number): BadgeTone {
-  if (losScore === 3 || losLabel === 'High') return 'success';
-  if (losScore === 2 || losLabel === 'Medium') return 'warning';
-  if (losScore === 1 || losLabel === 'Low') return 'warning';
-  if (losScore === -1 || losLabel?.includes('non-compliant')) return 'purple';
-  if (losScore === 0 || losLabel?.includes('Should not be used')) return 'danger';
+  if (losScore === 4 || losScore === 3 || losLabel?.startsWith('Grade A') || losLabel?.startsWith('Grade B')) {
+    return 'success';
+  }
+  if (losScore === 2 || losScore === 1 || losLabel?.startsWith('Grade C') || losLabel?.startsWith('Grade D')) {
+    return 'warning';
+  }
+  if (losScore === 0 || losLabel?.startsWith('Grade E')) {
+    return 'danger';
+  }
   return 'civic';
 }
 
-export function formatShortLosLabel(losLabel: string | undefined, losScore?: number): string {
-  if (losScore === 3 || losLabel === 'High') return 'High (LoS 3)';
-  if (losScore === 2 || losLabel === 'Medium') return 'Medium (LoS 2)';
-  if (losScore === 1 || losLabel === 'Low') return 'Low (LoS 1)';
-  if (losScore === -1 || losLabel?.includes('non-compliant')) return 'Non-Compliant';
-  if (losScore === 0 || losLabel?.includes('mixed')) return 'Unsuitable (Mixed)';
+export function formatShortLosLabel(losLabel: string | undefined, activeGrade?: string): string {
+  if (activeGrade) {
+    const g = activeGrade.toUpperCase();
+    if (g === 'A') return 'Grade A · Excellent';
+    if (g === 'B') return 'Grade B · Good';
+    if (g === 'C') return 'Grade C · Moderate';
+    if (g === 'D') return 'Grade D · Poor';
+    if (g === 'E') return 'Grade E · Hostile';
+  }
+  if (losLabel?.startsWith('Grade A')) return 'Grade A · Excellent';
+  if (losLabel?.startsWith('Grade B')) return 'Grade B · Good';
+  if (losLabel?.startsWith('Grade C')) return 'Grade C · Moderate';
+  if (losLabel?.startsWith('Grade D')) return 'Grade D · Poor';
+  if (losLabel?.startsWith('Grade E')) return 'Grade E · Hostile';
   return losLabel || 'Classified';
+}
+
+export function formatModeLabel(mode: TravelMode): string {
+  switch (mode) {
+    case 'multimodal':
+      return 'Multi-Modal';
+    case 'walking':
+      return 'Walking';
+    case 'wheeling':
+      return 'Wheeling';
+    case 'cycling':
+      return 'Cycling';
+  }
+}
+
+export function formatStandardLabel(std: DesignStandard): string {
+  return std === 'ltn120' ? 'England LTN 1/20' : 'Scotland CbD';
 }
 
 export function buildLegendMetrics(

@@ -1,12 +1,15 @@
 <script lang="ts">
   import BasemapControl from './BasemapControl.svelte';
   import PlaceSearch from './PlaceSearch.svelte';
-  import type { BasemapId, SearchResult, ThemeMode } from '../../types';
+  import { formatModeLabel, formatStandardLabel } from '../palette';
+  import type { BasemapId, DesignStandard, SearchResult, ThemeMode, TravelMode } from '../../types';
 
   let {
     sidebarOpen,
     onToggleSidebar,
     areaLabel = 'Edinburgh',
+    activeMode = 'multimodal',
+    standard = 'ltn120',
     isLoading = false,
     basemap = 'light',
     showPlaceNames = true,
@@ -22,6 +25,8 @@
     sidebarOpen: boolean;
     onToggleSidebar: () => void;
     areaLabel?: string;
+    activeMode?: TravelMode;
+    standard?: DesignStandard;
     isLoading?: boolean;
     basemap: BasemapId;
     showPlaceNames: boolean;
@@ -87,7 +92,9 @@
             <span class="area-badge" title="Active study network">{areaLabel}</span>
           {/if}
         </div>
-        <span class="subtitle">Multi-Modal Level of Service</span>
+        <span class="subtitle">
+          {formatModeLabel(activeMode)} · {formatStandardLabel(standard)}
+        </span>
       </div>
     </div>
   </div>

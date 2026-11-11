@@ -15,10 +15,11 @@
   export function mapButtonsHtml(lon: number, lat: number, osmId?: number | string | null): string {
     const sv = streetViewUrl(lon, lat);
     const osm = osmWayUrl(osmId) ?? openStreetMapUrl(lon, lat);
+    const osmLabel = osmId ? 'OSM Way ↗' : 'OSM Map ↗';
     return `
       <div class="map-popup-links">
         <a href="${sv}" target="_blank" rel="noopener noreferrer" class="map-ext-link">Street View</a>
-        <a href="${osm}" target="_blank" rel="noopener noreferrer" class="map-ext-link">OSM Way ↗</a>
+        <a href="${osm}" target="_blank" rel="noopener noreferrer" class="map-ext-link">${osmLabel}</a>
       </div>
     `;
   }

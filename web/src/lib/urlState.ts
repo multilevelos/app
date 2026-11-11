@@ -1,7 +1,17 @@
-import type { BasemapId, ColorMode, LosConfig, ThemeMode } from '../types';
+import type {
+  BasemapId,
+  ColorMode,
+  DesignStandard,
+  LosConfig,
+  ThemeMode,
+  TravelMode
+} from '../types';
 
 export interface UrlStateSnapshot {
   preset?: string;
+  activeMode?: TravelMode;
+  standard?: DesignStandard;
+  showJunctions?: boolean;
   colorMode?: ColorMode;
   hiddenValues?: string[];
   basemap?: BasemapId;
@@ -15,8 +25,10 @@ export interface UrlStateSnapshot {
   minWide?: number;
 }
 
+const VALID_MODES: TravelMode[] = ['multimodal', 'walking', 'wheeling', 'cycling'];
+const VALID_STANDARDS: DesignStandard[] = ['ltn120', 'cbd'];
 const VALID_COLORS: ColorMode[] = ['los', 'infrastructure', 'speed', 'traffic'];
-const VALID_BASEMAPS: BasemapId[] = ['light', 'dark', 'voyager', 'opencyclemap', 'satellite'];
+const VALID_BASEMAPS: BasemapId[] = ['light', 'dark', 'voyager', 'cyclosm', 'satellite'];
 
 export function readUrlState(): UrlStateSnapshot {
   if (typeof window === 'undefined') return {};
@@ -25,6 +37,16 @@ export function readUrlState(): UrlStateSnapshot {
 
   const preset = params.get('preset');
   if (preset) out.preset = preset;
+
+  const mode = params.get('mode') as TravelMode | null;
+  if (mode && VALID_MODES.includes(mode)) out.activeMode = mode;
+
+  const std = params.get('std') as DesignStandard | null;
+  if (std && VALID_STANDARDS.includes(std)) out.standard = std;
+
+  const junc = params.get('junc');
+  if (junc === '0' || junc === 'false') out.showJunctions = false;
+  if (junc === '1' || junc === 'true') out.showJunctions = true;
 
   const color = params.get('color') as ColorMode | null;
   if (color && VALID_COLORS.includes(color)) out.colorMode = color;
@@ -37,8 +59,9 @@ export function readUrlState(): UrlStateSnapshot {
       .filter(Boolean);
   }
 
-  const basemap = params.get('basemap') as BasemapId | null;
-  if (basemap && VALID_BASEMAPS.includes(basemap)) out.basemap = basemap;
+  const rawBasemap = params.get('basemap');
+  const mappedBasemap = (rawBasemap === 'opencyclemap' ? 'cyclosm' : rawBasemap) as BasemapId | null;
+  if (mappedBasemap && VALID_BASEMAPS.includes(mappedBasemap)) out.basemap = mappedBasemap;
 
   const labels = params.get('labels');
   if (labels === '0' || labels === 'false') out.showPlaceNames = false;
@@ -82,6 +105,7 @@ export function buildShareUrl(state: {
   presetId: string | null;
   colorMode: ColorMode;
   hiddenValues: string[];
+  showJunctions: boolean;
   basemap: BasemapId;
   showPlaceNames: boolean;
   theme: ThemeMode;
@@ -94,6 +118,15 @@ export function buildShareUrl(state: {
 
   if (state.presetId && state.presetId !== 'edinburgh') {
     params.set('preset', state.presetId);
+  }
+  if (state.config.active_mode !== 'multimodal') {
+    params.set('mode', state.config.active_mode);
+  }
+  if (state.config.standard !== 'ltn120') {
+    params.set('std', state.config.standard);
+  }
+  if (!state.showJunctions) {
+    params.set('junc', '0');
   }
   if (state.colorMode !== 'los') {
     params.set('color', state.colorMode);

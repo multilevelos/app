@@ -1,10 +1,13 @@
 <script lang="ts">
-  import type { ColorMode, LegendMetricRow } from '../../types';
+  import type { ColorMode, JunctionSummaryStats, LegendMetricRow } from '../../types';
 
   let {
     colorMode = $bindable('los'),
     rows = [],
     hiddenValues = [],
+    showJunctions = true,
+    junctionStats = null,
+    onToggleJunctions = () => {},
     onToggleItem,
     onIsolateItem,
     onShowAll
@@ -12,6 +15,9 @@
     colorMode: ColorMode;
     rows: LegendMetricRow[];
     hiddenValues: string[];
+    showJunctions?: boolean;
+    junctionStats?: JunctionSummaryStats | null;
+    onToggleJunctions?: () => void;
     onToggleItem: (value: string) => void;
     onIsolateItem: (value: string) => void;
     onShowAll: () => void;
@@ -26,9 +32,9 @@
   <div class="colorby-row">
     <label for="colorby-select">Colour by</label>
     <select id="colorby-select" bind:value={colorMode}>
-      <option value="los">Level of Service (LoS)</option>
-      <option value="infrastructure">Infrastructure type</option>
-      <option value="speed">Speed limit</option>
+      <option value="los">Level of Service (Grades A–E)</option>
+      <option value="infrastructure">Infrastructure & facility</option>
+      <option value="speed">Effective speed limit</option>
       <option value="traffic">Traffic volume (AADT)</option>
     </select>
     {#if hiddenValues.length > 0}
@@ -77,6 +83,37 @@
       </div>
     {/each}
   </div>
+
+  {#if junctionStats && junctionStats.total_junctions > 0}
+    <div class="junction-overlay-row" class:dimmed={!showJunctions}>
+      <button
+        type="button"
+        class="row-btn"
+        onclick={onToggleJunctions}
+        aria-pressed={showJunctions}
+        title={showJunctions ? 'Hide Junction & Crossing LoS polygons' : 'Show Junction & Crossing LoS polygons'}
+      >
+        <span class="check-box" class:checked={showJunctions}>
+          {#if showJunctions}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          {/if}
+        </span>
+        <span class="swatch-poly" aria-hidden="true"></span>
+        <span class="label-col">
+          <span class="row-label">Junctions & Crossings Overlay</span>
+          <span class="row-desc">
+            {junctionStats.signalized_count} signalized · {junctionStats.marked_crossing_count} marked
+          </span>
+        </span>
+        <span class="metrics-col junc-metrics font-mono">
+          <span class="km-val">{junctionStats.total_junctions}</span>
+          <span class="pct-val">{junctionStats.suitable_pct.toFixed(0)}% A–B</span>
+        </span>
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -142,7 +179,8 @@
     gap: 2px;
   }
 
-  .legend-row {
+  .legend-row,
+  .junction-overlay-row {
     position: relative;
     display: flex;
     align-items: center;
@@ -150,11 +188,19 @@
     transition: background-color 0.12s ease;
   }
 
-  .legend-row:hover {
+  .junction-overlay-row {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-color);
+  }
+
+  .legend-row:hover,
+  .junction-overlay-row:hover {
     background: var(--bg-secondary);
   }
 
-  .legend-row.dimmed {
+  .legend-row.dimmed,
+  .junction-overlay-row.dimmed {
     opacity: 0.48;
   }
 
@@ -202,6 +248,15 @@
     flex-shrink: 0;
   }
 
+  .swatch-poly {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--accent-civic);
+    background: var(--accent-civic-soft);
+    flex-shrink: 0;
+  }
+
   .label-col {
     flex: 1;
     min-width: 0;
@@ -237,6 +292,10 @@
 
   .legend-row:hover .metrics-col {
     opacity: 0.15;
+  }
+
+  .junc-metrics .pct-val {
+    min-width: 44px;
   }
 
   .km-val {

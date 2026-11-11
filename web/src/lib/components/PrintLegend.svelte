@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SCHEMES } from '../palette';
+  import { formatModeLabel, formatStandardLabel, SCHEMES } from '../palette';
   import type { ColorMode, LegendMetricRow, LosConfig, SummaryStats } from '../../types';
 
   let {
@@ -62,7 +62,10 @@
       <div class="pl-title">{schemeTitle}</div>
       {#if summary}
         <div class="pl-sub font-mono">
-          {summary.total_length_km.toFixed(1)} km · {summary.high_med_pct}% Suitable
+          {summary.total_length_km.toFixed(1)} km · {summary.high_med_pct}% A–B
+          {#if summary.junctions?.total_junctions > 0}
+            · {summary.junctions.total_junctions} jcts
+          {/if}
         </div>
       {/if}
     </div>
@@ -78,6 +81,8 @@
     </div>
 
     <div class="pl-chips">
+      <span class="pl-chip">{formatModeLabel(config.active_mode)}</span>
+      <span class="pl-chip">{formatStandardLabel(config.standard)}</span>
       {#if Math.abs(config.traffic_multiplier - 1.0) > 0.01}
         <span class="pl-chip">Traffic {config.traffic_multiplier.toFixed(1)}x</span>
       {/if}
@@ -139,7 +144,7 @@
     position: absolute;
     bottom: 24px;
     left: 24px;
-    width: 265px;
+    width: 275px;
     padding: 12px 14px;
     z-index: 35;
   }

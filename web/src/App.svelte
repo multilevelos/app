@@ -4,16 +4,23 @@
   import type {
     BasemapId,
     ColorMode,
+    LosAnalysisOutput,
     LosConfig,
     PresetLocation,
     SearchResult,
-    SelectedSegment,
+    SelectedFeature,
     SummaryStats,
     ThemeMode
   } from './types';
   import { engineInstance, ensureWasmInitialized } from './lib/engine';
   import { fetchOsmNetworkForBbox, sanitizeBbox } from './lib/overpass';
-  import { buildLegendMetrics, PRESET_LOCATIONS, SCHEMES } from './lib/palette';
+  import {
+    buildLegendMetrics,
+    formatModeLabel,
+    formatStandardLabel,
+    PRESET_LOCATIONS,
+    SCHEMES
+  } from './lib/palette';
   import { buildShareUrl, readUrlState, syncUrlStateDebounced } from './lib/urlState';
   import Header from './lib/components/Header.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -25,6 +32,12 @@
   const isMobileInit = typeof window !== 'undefined' && window.innerWidth <= 768;
 
   const baseConfig = engineInstance.getDefaultConfig();
+  if (initialUrl.activeMode !== undefined) {
+    baseConfig.active_mode = initialUrl.activeMode;
+  }
+  if (initialUrl.standard !== undefined) {
+    baseConfig.standard = initialUrl.standard;
+  }
   if (initialUrl.trafficMultiplier !== undefined) {
     baseConfig.traffic_multiplier = initialUrl.trafficMultiplier;
   }
@@ -41,9 +54,11 @@
   let config = $state<LosConfig>(baseConfig);
 
   let geojson = $state<FeatureCollection | null>(null);
+  let junctionsGeojson = $state<FeatureCollection | null>(null);
   let summary = $state<SummaryStats | null>(null);
   let colorMode = $state<ColorMode>(initialUrl.colorMode ?? 'los');
   let hiddenValues = $state<string[]>(initialUrl.hiddenValues ?? []);
+  let showJunctions = $state<boolean>(initialUrl.showJunctions ?? true);
   let basemap = $state<BasemapId>(initialUrl.basemap ?? 'light');
   let showPlaceNames = $state<boolean>(initialUrl.showPlaceNames ?? true);
   let theme = $state<ThemeMode>(initialUrl.theme ?? 'light');
@@ -52,7 +67,7 @@
 
   let selectedPresetId = $state<string | null>(initialUrl.preset ?? 'edinburgh');
   let areaLabel = $state<string>('Edinburgh');
-  let selectedSegment = $state<SelectedSegment | null>(null);
+  let selectedFeature = $state<SelectedFeature | null>(null);
 
   let isLoading = $state(true);
   let loadingMessage = $state('Initializing WebAssembly engine...');
@@ -71,6 +86,57 @@
     toastTimer = setTimeout(() => {
       toast = null;
     }, durationMs);
+  }
+
+  function applyAnalysisOutput(result: LosAnalysisOutput) {
+    geojson = result.geojson;
+    junctionsGeojson = result.junctions_geojson;
+    summary = result.summary;
+
+    // Keep open detail card synchronized if active mode or parameters changed
+    if (selectedFeature) {
+      if (selectedFeature.kind === 'segment') {
+        const match = result.geojson.features.find(
+          (f) =>
+            selectedFeature?.kind === 'segment' &&
+            Number(f.properties?.osm_id) === selectedFeature.osm_id
+        );
+        if (match?.properties) {
+          const p = match.properties;
+          selectedFeature = {
+            ...selectedFeature,
+            grade_multimodal: String(p.grade_multimodal || 'C'),
+            grade_walking: String(p.grade_walking || 'C'),
+            grade_wheeling: String(p.grade_wheeling || 'C'),
+            grade_cycling: String(p.grade_cycling || 'C'),
+            active_grade: String(p.active_grade || 'C'),
+            los_score: Number(p.los_score ?? 0),
+            los_label: String(p.los_label || ''),
+            los_color: String(p.los_color || '#059669'),
+            speed_limit_mph: p.speed_limit_mph != null ? Number(p.speed_limit_mph) : null,
+            estimated_aadt: p.estimated_aadt != null ? Number(p.estimated_aadt) : null
+          };
+        }
+      } else if (selectedFeature.kind === 'junction') {
+        const match = result.junctions_geojson.features.find(
+          (f) =>
+            selectedFeature?.kind === 'junction' &&
+            Number(f.properties?.junction_id) === selectedFeature.junction_id
+        );
+        if (match?.properties) {
+          const p = match.properties;
+          selectedFeature = {
+            ...selectedFeature,
+            grade_multimodal: String(p.grade_multimodal || 'C'),
+            grade_walking: String(p.grade_walking || 'C'),
+            grade_wheeling: String(p.grade_wheeling || 'C'),
+            grade_cycling: String(p.grade_cycling || 'C'),
+            active_grade: String(p.active_grade || 'C'),
+            los_color: String(p.los_color || '#eab308')
+          };
+        }
+      }
+    }
   }
 
   // Keep <html data-theme="..."> synchronized
@@ -95,6 +161,7 @@
       presetId: selectedPresetId,
       colorMode,
       hiddenValues,
+      showJunctions,
       basemap,
       showPlaceNames,
       theme,
@@ -125,7 +192,7 @@
     isLoading = true;
     selectedPresetId = preset.id;
     areaLabel = preset.name.split(' (')[0];
-    selectedSegment = null;
+    selectedFeature = null;
     loadingMessage = `Loading ${preset.name}...`;
 
     try {
@@ -137,16 +204,15 @@
       }
 
       const osmText = await response.text();
-      loadingMessage = 'Computing Level of Service in Rust WASM...';
+      loadingMessage = 'Scoring links & junctions in Rust WASM...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
-      geojson = result.geojson;
-      summary = result.summary;
+      applyAnalysisOutput(result);
 
       mapComponent?.flyToBounds(preset.bbox, preserveExistingHash);
       notify(
-        `${preset.name}: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`
+        `${preset.name}: ${result.segments_count.toLocaleString()} links · ${result.junctions_count.toLocaleString()} junctions`
       );
     } catch (err: any) {
       console.error('Preset load failed:', err);
@@ -169,17 +235,16 @@
     );
 
     isLoading = true;
-    selectedSegment = null;
-    loadingMessage = 'Downloading OpenStreetMap ways from Overpass...';
+    selectedFeature = null;
+    loadingMessage = 'Downloading OpenStreetMap ways & crossings from Overpass...';
 
     try {
       const osmText = await fetchOsmNetworkForBbox(minLng, minLat, maxLng, maxLat);
-      loadingMessage = 'Running Level of Service analysis in Rust WASM...';
+      loadingMessage = 'Running MMLoS & junction analysis in Rust WASM...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
-      geojson = result.geojson;
-      summary = result.summary;
+      applyAnalysisOutput(result);
       selectedPresetId = null;
       areaLabel = 'Live OSM View';
 
@@ -187,7 +252,7 @@
         notify('No street or path segments found in this area. Zoom into a town or city.', 'error');
       } else {
         notify(
-          `Fetched live OSM: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`
+          `Fetched live OSM: ${result.segments_count.toLocaleString()} links · ${result.junctions_count.toLocaleString()} junctions`
         );
       }
     } catch (err: any) {
@@ -209,21 +274,22 @@
 
     mapComponent?.flyToBounds([w, s, e, n]);
     isLoading = true;
-    selectedSegment = null;
+    selectedFeature = null;
     loadingMessage = `Downloading OSM network for ${placeName}...`;
 
     try {
       const osmText = await fetchOsmNetworkForBbox(w, s, e, n);
-      loadingMessage = 'Computing Level of Service in Rust WASM...';
+      loadingMessage = 'Computing Multi-Modal Level of Service...';
       await engineInstance.initFromOsmJson(osmText);
 
       const res = engineInstance.calculateLos(config);
-      geojson = res.geojson;
-      summary = res.summary;
+      applyAnalysisOutput(res);
       selectedPresetId = null;
       areaLabel = placeName;
 
-      notify(`${placeName}: ${res.segments_count.toLocaleString()} links (${res.summary.total_length_km} km)`);
+      notify(
+        `${placeName}: ${res.segments_count.toLocaleString()} links · ${res.junctions_count.toLocaleString()} junctions`
+      );
     } catch (err: any) {
       console.error('Search load error:', err);
       notify(`Could not fetch OSM for ${placeName}: ${err?.message || err}`, 'error', 6000);
@@ -234,15 +300,14 @@
 
   async function handleFileUpload(file: File) {
     isLoading = true;
-    selectedSegment = null;
+    selectedFeature = null;
     loadingMessage = `Parsing ${file.name}...`;
 
     try {
       const osmText = await file.text();
       await engineInstance.initFromOsmJson(osmText);
       const result = engineInstance.calculateLos(config);
-      geojson = result.geojson;
-      summary = result.summary;
+      applyAnalysisOutput(result);
       selectedPresetId = null;
       areaLabel = file.name.replace(/\.(geo)?json$/i, '');
 
@@ -265,7 +330,9 @@
           mapComponent?.flyToBounds([minX, minY, maxX, maxY]);
         }
       }
-      notify(`Loaded ${file.name}: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`);
+      notify(
+        `Loaded ${file.name}: ${result.segments_count.toLocaleString()} links · ${result.junctions_count.toLocaleString()} junctions`
+      );
     } catch (err: any) {
       console.error('Upload error:', err);
       notify(`Invalid Overpass JSON file: ${err?.message || err}`, 'error', 6000);
@@ -278,8 +345,7 @@
     if (!engineInstance.isReady()) return;
     try {
       const result = engineInstance.calculateLos(config);
-      geojson = result.geojson;
-      summary = result.summary;
+      applyAnalysisOutput(result);
     } catch (err: any) {
       console.error('Recalculation error:', err);
     }
@@ -288,7 +354,7 @@
   function handleResetConfig() {
     config = engineInstance.getDefaultConfig();
     handleConfigChange();
-    notify('Reset traffic & geometry parameters to defaults');
+    notify('Reset mode, standard & traffic parameters to defaults');
   }
 
   function handleToggleLegendItem(value: string) {
@@ -302,7 +368,6 @@
   function handleIsolateLegendItem(value: string) {
     const allValues = SCHEMES[colorMode].entries.map((e) => e.value);
     const others = allValues.filter((v) => v !== value);
-    // Clicking 'only' again when already isolated restores all
     if (hiddenValues.length === others.length && !hiddenValues.includes(value)) {
       hiddenValues = [];
     } else {
@@ -310,9 +375,9 @@
     }
   }
 
-  function handleZoomToSegment(seg: SelectedSegment) {
-    if (seg.bbox) {
-      mapComponent?.flyToBounds(seg.bbox);
+  function handleZoomToFeature(feat: SelectedFeature) {
+    if (feat.bbox) {
+      mapComponent?.flyToBounds(feat.bbox);
     }
   }
 
@@ -321,6 +386,7 @@
       presetId: selectedPresetId,
       colorMode,
       hiddenValues,
+      showJunctions,
       basemap,
       showPlaceNames,
       theme,
@@ -338,23 +404,41 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `multilevelos_${areaLabel.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.geojson`;
+    a.download = `multilevelos_links_${areaLabel.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportJunctionsGeoJSON() {
+    if (!junctionsGeojson) return;
+    const blob = new Blob([JSON.stringify(junctionsGeojson, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `multilevelos_junctions_${areaLabel.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.geojson`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
   function handleExportCSV() {
     if (!summary) return;
-    let csv = 'Category_Type,Category_Name,Length_km,Percentage,Segments_Count\n';
+    let csv = 'Category_Type,Category_Name,Length_km,Percentage,Count\n';
     for (const [key, val] of Object.entries(summary.los_breakdown)) {
-      csv += `"Level of Service","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
+      csv += `"Level of Service (${formatModeLabel(config.active_mode)})","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
     }
     for (const [key, val] of Object.entries(summary.infra_breakdown)) {
       csv += `"Infrastructure","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
     }
+    csv += `\n"Cross-Modal Suitability","Multi-Modal (Grades A-B)",,${summary.mode_suitability.multimodal_ab_pct}%,\n`;
+    csv += `"Cross-Modal Suitability","Walking (Grades A-B)",,${summary.mode_suitability.walking_ab_pct}%,\n`;
+    csv += `"Cross-Modal Suitability","Wheeling (Grades A-B)",,${summary.mode_suitability.wheeling_ab_pct}%,\n`;
+    csv += `"Cross-Modal Suitability","Cycling (Grades A-B, ${formatStandardLabel(config.standard)})",,${summary.mode_suitability.cycling_ab_pct}%,\n`;
+    csv += `\n"Junctions","Total Analyzed Junctions",,${summary.junctions.suitable_pct}% A-B,${summary.junctions.total_junctions}\n`;
+    csv += `"Junctions","Signal-Controlled",, ,${summary.junctions.signalized_count}\n`;
+    csv += `"Junctions","Marked Priority Crossings",, ,${summary.junctions.marked_crossing_count}\n`;
     csv += `\n"Summary Metric","Total Analyzed Network Length",${summary.total_length_km},"km",${summary.total_segments}\n`;
-    csv += `"Summary Metric","Suitable Network (High/Medium)",${summary.high_med_pct}%,,\n`;
-    csv += `"Summary Metric","Unsuitable / Non-Compliant",${summary.unsuitable_pct}%,,\n`;
+    csv += `"Summary Metric","Suitable Network (Grades A-B)",${summary.high_med_pct}%,,\n`;
+    csv += `"Summary Metric","Hostile / Barrier (Grade E)",${summary.unsuitable_pct}%,,\n`;
     csv += `"Summary Metric","Average Speed Limit",${summary.average_speed_mph},"mph",\n`;
 
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -373,7 +457,7 @@
       printMode = printMode ? null : 'legend';
     } else if (e.key === 'Escape') {
       if (printMode) printMode = null;
-      else if (selectedSegment) selectedSegment = null;
+      else if (selectedFeature) selectedFeature = null;
     }
   }
 </script>
@@ -385,6 +469,8 @@
     {sidebarOpen}
     onToggleSidebar={() => (sidebarOpen = !sidebarOpen)}
     {areaLabel}
+    activeMode={config.active_mode}
+    standard={config.standard}
     {isLoading}
     {basemap}
     {showPlaceNames}
@@ -413,10 +499,12 @@
       bind:colorMode
       {legendRows}
       {hiddenValues}
+      {showJunctions}
       {selectedPresetId}
       {isLoading}
       {loadingMessage}
       onCloseMobile={() => (sidebarOpen = false)}
+      onToggleJunctions={() => (showJunctions = !showJunctions)}
       onToggleLegendItem={handleToggleLegendItem}
       onIsolateLegendItem={handleIsolateLegendItem}
       onShowAllLegend={() => (hiddenValues = [])}
@@ -424,6 +512,7 @@
       onConfigChange={handleConfigChange}
       onResetConfig={handleResetConfig}
       onExportGeoJSON={handleExportGeoJSON}
+      onExportJunctionsGeoJSON={handleExportJunctionsGeoJSON}
       onExportCSV={handleExportCSV}
       onFileUpload={handleFileUpload}
     />
@@ -433,19 +522,21 @@
     <MapContainer
       bind:this={mapComponent}
       {geojson}
+      {junctionsGeojson}
+      {showJunctions}
       {colorMode}
       {hiddenValues}
       {basemap}
       {showPlaceNames}
       sidebarOpen={!printMode && sidebarOpen}
-      onSelectSegment={(seg) => (selectedSegment = seg)}
+      onSelectFeature={(feat) => (selectedFeature = feat)}
     />
 
     {#if !printMode}
       <DetailPanel
-        segment={selectedSegment}
-        onClose={() => (selectedSegment = null)}
-        onZoomTo={handleZoomToSegment}
+        feature={selectedFeature}
+        onClose={() => (selectedFeature = null)}
+        onZoomTo={handleZoomToFeature}
       />
     {:else}
       <PrintLegend
