@@ -4,6 +4,7 @@ pub mod infrastructure;
 pub mod junctions;
 pub mod los;
 pub mod osm;
+pub mod rural;
 pub mod spatial;
 pub mod speed;
 pub mod traffic;
@@ -24,6 +25,12 @@ pub use los::{
 pub use osm::{
     extract_resolved_ways, extract_tagged_nodes, parse_overpass_json, OsmElement, OverpassResponse,
     ResolvedOsmNode, ResolvedOsmWay,
+};
+pub use rural::{
+    classify_cycling_category, classify_walking_category, extract_prow_designation,
+    extract_rural_surface_group, score_rural_cycling_grade, score_rural_junction_grades,
+    score_rural_walking_grade, CyclingCategory, ProwDesignation, RuralSurfaceGroup,
+    WalkingCategory,
 };
 pub use spatial::{
     associate_nearest_driving_road, build_driving_roads_index,
@@ -187,5 +194,55 @@ mod tests {
         assert_eq!(res.junctions_count, 1);
         assert_eq!(res.junctions[0].control_type, "Signal-controlled");
         assert!(res.junctions[0].arm_count >= 4);
+    }
+
+    #[test]
+    fn test_ate_rural_design_guide_2026_categories_and_scoring() {
+        let rural_osm = r#"{
+          "elements": [
+            {"type": "node", "id": 1, "lat": 53.2100, "lon": -1.6800},
+            {"type": "node", "id": 2, "lat": 53.2100, "lon": -1.6750, "tags": {"highway": "crossing", "crossing": "zebra"}},
+            {"type": "node", "id": 3, "lat": 53.2100, "lon": -1.6700},
+            {"type": "node", "id": 4, "lat": 53.2120, "lon": -1.6800},
+            {"type": "node", "id": 5, "lat": 53.2120, "lon": -1.6700},
+            {"type": "node", "id": 6, "lat": 53.2140, "lon": -1.6800},
+            {"type": "node", "id": 7, "lat": 53.2140, "lon": -1.6700},
+            {"type": "node", "id": 8, "lat": 53.2160, "lon": -1.6800},
+            {"type": "node", "id": 9, "lat": 53.2160, "lon": -1.6700},
+            {"type": "way", "id": 201, "nodes": [1, 2, 3], "tags": {"highway": "trunk", "name": "A6 Buxton Road", "maxspeed": "60 mph"}},
+            {"type": "way", "id": 202, "nodes": [4, 5], "tags": {"highway": "bridleway", "name": "Monsal Trail", "designation": "public_bridleway", "surface": "compacted", "width": "4.5"}},
+            {"type": "way", "id": 203, "nodes": [6, 7], "tags": {"highway": "unclassified", "name": "Quiet Country Lane", "maxspeed": "30 mph"}},
+            {"type": "way", "id": 204, "nodes": [8, 9], "tags": {"highway": "tertiary", "name": "Village Edge Lane", "maxspeed": "20 mph", "sidewalk": "lane"}}
+          ]
+        }"#;
+
+        let engine = LosEngine::from_overpass_json(rural_osm).unwrap();
+        let mut cfg = LosConfig::default();
+        cfg.standard = DesignStandard::Rural2026;
+        let res = engine.run_analysis(&cfg).unwrap();
+
+        // Bridleway with compacted unbound surface -> Motor-Free Path / PRoW (walk) & Motor-Free Greenway / Bridleway (cycle), capped at Grade C per Table 4-1
+        let bridleway = res.segments.iter().find(|s| s.osm_id == 202).unwrap();
+        assert_eq!(bridleway.walking_category, "Motor-Free Path / PRoW");
+        assert_eq!(bridleway.cycling_category, "Motor-Free Greenway / Bridleway");
+        assert_eq!(bridleway.prow_designation.as_deref(), Some("Public Bridleway"));
+        assert_eq!(bridleway.grade_cycling, "C");
+
+        // Rural 30 mph unclassified lane (500 AADT < 1,000 pcu/day): Footnote 5 gives Grade B cycling, while walking in mixed traffic at 30 mph is Grade E per Table 4-3!
+        let lane = res.segments.iter().find(|s| s.osm_id == 203).unwrap();
+        assert_eq!(lane.cycling_category, "Quiet Lane / Country Lane");
+        assert_eq!(lane.walking_category, "Carriageway (No Footway)");
+        assert_eq!(lane.grade_cycling, "B");
+        assert_eq!(lane.grade_walking, "E");
+
+        // Virtual / implied footway at 20 mph & 3,000 AADT -> Grade B per Table 4-3 col 2
+        let vf = res.segments.iter().find(|s| s.osm_id == 204).unwrap();
+        assert_eq!(vf.walking_category, "Virtual / Implied Footway");
+        assert_eq!(vf.grade_walking, "B");
+
+        // Zebra crossing on a 60 mph trunk road -> Grade E across all modes per Table 10-1!
+        assert_eq!(res.junctions_count, 1);
+        assert_eq!(res.junctions[0].grade_walking, "E");
+        assert_eq!(res.junctions[0].grade_cycling, "E");
     }
 }

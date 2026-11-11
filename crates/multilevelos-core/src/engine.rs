@@ -1,5 +1,5 @@
 use crate::{
-    config::{LosConfig, TravelMode},
+    config::{DesignStandard, LosConfig, TravelMode},
     infrastructure::{
         classify_cycle_infrastructure, extract_incline_pct, extract_separation,
         extract_surface_quality, extract_width_m, sidewalk_status, InfrastructureType,
@@ -10,6 +10,11 @@ use crate::{
         score_wheeling_grade, MmlosGrade,
     },
     osm::{extract_resolved_ways, extract_tagged_nodes, parse_overpass_json, ResolvedOsmNode, ResolvedOsmWay},
+    rural::{
+        classify_cycling_category, classify_walking_category, extract_prow_designation,
+        extract_rural_surface_group, score_rural_cycling_grade, score_rural_walking_grade,
+        CyclingCategory, ProwDesignation, WalkingCategory,
+    },
     spatial::{
         associate_nearest_driving_road, build_driving_roads_index_with_config, polyline_length_m,
     },
@@ -46,6 +51,8 @@ pub struct SummaryStats {
     pub total_segments: usize,
     pub los_breakdown: HashMap<String, CategoryMetric>,
     pub infra_breakdown: HashMap<String, CategoryMetric>,
+    pub walking_breakdown: HashMap<String, CategoryMetric>,
+    pub cycling_breakdown: HashMap<String, CategoryMetric>,
     pub high_med_pct: f64,
     pub unsuitable_pct: f64,
     pub average_speed_mph: f64,
@@ -59,6 +66,10 @@ pub struct ClassifiedSegment {
     pub name: String,
     pub highway: String,
     pub infrastructure: String,
+    pub walking_category: String,
+    pub cycling_category: String,
+    pub prow_designation: Option<String>,
+    pub rural_surface: String,
     pub separation: String,
     pub surface: String,
     pub width_m: Option<f64>,
@@ -227,29 +238,85 @@ impl LosEngine {
 
             let effective_speed = speed_limit_mph.unwrap_or(10.0);
 
-            // Compute Scottish CbD reference label
-            let cbd_score = lookup_level_of_service(speed_cat, aadt_cat, infra_type);
+            let prow = extract_prow_designation(highway, &way.tags);
+            let rural_surface = extract_rural_surface_group(highway, &way.tags);
+            let equestrian = matches!(
+                prow,
+                Some(ProwDesignation::PublicBridleway | ProwDesignation::RestrictedByway)
+            ) || way
+                .tags
+                .get("horse")
+                .is_some_and(|v| matches!(v.as_str(), "yes" | "designated"));
 
-            // Compute calibrated A–E grades across all modes
-            let g_cycling = score_cycling_grade(
-                config.standard,
-                effective_speed,
-                estimated_aadt,
-                infra_type,
-                surface,
-                cycling_allowed,
-            );
-            let g_walking = score_walking_grade(
+            let walk_cat = classify_walking_category(
                 highway,
-                infra_type,
+                &way.tags,
+                distance_to_road_m,
+                config.min_offroad_distance,
                 effective_speed,
                 estimated_aadt,
                 sidewalk,
-                width_m,
-                surface,
-                is_lit,
+                is_urban,
                 walking_allowed,
             );
+            let cycle_cat = classify_cycling_category(
+                highway,
+                &way.tags,
+                distance_to_road_m,
+                config.min_offroad_distance,
+                effective_speed,
+                estimated_aadt,
+                is_urban,
+                cycling_allowed,
+            );
+
+            // Compute Scottish CbD reference label
+            let cbd_score = lookup_level_of_service(speed_cat, aadt_cat, infra_type);
+
+            // Compute calibrated A–E grades across all modes (ATE Rural Design Guide 2026 vs LTN 1/20 vs CbD)
+            let (g_cycling, g_walking) = if config.standard == DesignStandard::Rural2026 {
+                let gc = score_rural_cycling_grade(
+                    cycle_cat,
+                    effective_speed,
+                    estimated_aadt,
+                    width_m,
+                    rural_surface,
+                    is_urban,
+                    equestrian,
+                );
+                let gw = score_rural_walking_grade(
+                    walk_cat,
+                    effective_speed,
+                    estimated_aadt,
+                    width_m,
+                    rural_surface,
+                    is_lit,
+                    is_urban,
+                );
+                (gc, gw)
+            } else {
+                let gc = score_cycling_grade(
+                    config.standard,
+                    effective_speed,
+                    estimated_aadt,
+                    infra_type,
+                    surface,
+                    cycling_allowed,
+                );
+                let gw = score_walking_grade(
+                    highway,
+                    infra_type,
+                    effective_speed,
+                    estimated_aadt,
+                    sidewalk,
+                    width_m,
+                    surface,
+                    is_lit,
+                    walking_allowed,
+                );
+                (gc, gw)
+            };
+
             let g_wheeling = score_wheeling_grade(
                 highway,
                 infra_type,
@@ -287,6 +354,10 @@ impl LosEngine {
                 name,
                 highway: highway.to_string(),
                 infrastructure: infra_type.as_str().to_string(),
+                walking_category: walk_cat.label().to_string(),
+                cycling_category: cycle_cat.label().to_string(),
+                prow_designation: prow.map(|p| p.label().to_string()),
+                rural_surface: rural_surface.label().to_string(),
                 separation: separation.to_string(),
                 surface: surface.as_str().to_string(),
                 width_m,
@@ -376,6 +447,18 @@ fn is_excluded_for_walking(highway: &str, tags: &HashMap<String, String>) -> boo
             return true;
         }
     }
+    if highway == "track" {
+        if let Some(acc) = tags.get("access") {
+            if matches!(acc.as_str(), "private" | "no")
+                && !tags
+                    .get("foot")
+                    .is_some_and(|f| matches!(f.as_str(), "yes" | "designated" | "permissive"))
+                && extract_prow_designation(highway, tags).is_none()
+            {
+                return true;
+            }
+        }
+    }
     if tags.get("motorroad").map(|v| v == "yes").unwrap_or(false) {
         return true;
     }
@@ -396,12 +479,32 @@ fn is_excluded_for_cycling(highway: &str, tags: &HashMap<String, String>) -> boo
         }
     }
 
+    let prow = extract_prow_designation(highway, tags);
+    let bicycle = tags.get("bicycle").map(|s| s.as_str()).unwrap_or("");
+    let seg = tags.get("segregated").map(|s| s.as_str()).unwrap_or("");
+
+    // Table 8.1: Public Footpaths prohibit cycling unless explicitly permitted
+    if matches!(prow, Some(ProwDesignation::PublicFootpath))
+        && !matches!(bicycle, "yes" | "designated" | "permissive")
+    {
+        return true;
+    }
+
     if matches!(highway, "footway" | "pedestrian") {
-        let bicycle = tags.get("bicycle").map(|s| s.as_str()).unwrap_or("");
-        let seg = tags.get("segregated").map(|s| s.as_str()).unwrap_or("");
-        if !matches!(bicycle, "yes" | "designated" | "permissive") && seg != "yes" {
+        if !matches!(bicycle, "yes" | "designated" | "permissive")
+            && seg != "yes"
+            && !prow.is_some_and(ProwDesignation::allows_cycling_by_default)
+        {
             return true;
         }
+    }
+
+    // Farm/forestry tracks require Bridleway / Restricted Byway / BOAT designation or explicit bicycle access
+    if highway == "track"
+        && !matches!(bicycle, "yes" | "designated" | "permissive")
+        && !prow.is_some_and(ProwDesignation::allows_cycling_by_default)
+    {
+        return true;
     }
 
     false
@@ -414,6 +517,8 @@ fn compute_summary_statistics(
     let mut total_length_m = 0.0;
     let mut los_lengths: HashMap<String, (f64, usize, String)> = HashMap::new();
     let mut infra_lengths: HashMap<String, (f64, usize, String)> = HashMap::new();
+    let mut walk_cat_lengths: HashMap<String, (f64, usize, String)> = HashMap::new();
+    let mut cycle_cat_lengths: HashMap<String, (f64, usize, String)> = HashMap::new();
 
     let mut speed_sum_weighted = 0.0;
     let mut speed_len_weighted = 0.0;
@@ -435,10 +540,14 @@ fn compute_summary_statistics(
         let infra_color = match s.infrastructure.as_str() {
             "Segregated Track (wide)" => "#059669",
             "Off Road Path" => "#16a34a",
+            "Bridleway / Rural Greenway" => "#15803d",
             "Segregated Track (narrow)" => "#65a30d",
+            "Stepped Cycle Track" => "#84cc16",
             "Light Segregation" => "#0d9488",
             "Bus / Shared Priority Lane" => "#0284c7",
             "Pedestrian Footway / Zone" => "#2563eb",
+            "Virtual / Implied Footway" => "#0ea5e9",
+            "Quiet Lane / Country Lane" => "#22c55e",
             "Shared Footway" => "#d97706",
             "Painted Cycle Lane" => "#ea580c",
             "Steps (Stepped Access)" => "#9333ea",
@@ -450,6 +559,39 @@ fn compute_summary_statistics(
             .or_insert((0.0, 0, infra_color.to_string()));
         entry_infra.0 += s.length_m;
         entry_infra.1 += 1;
+
+        let walk_color = match s.walking_category.as_str() {
+            "Motor-Free Path / PRoW" => WalkingCategory::MotorFreePathProw.color(),
+            "Protected Footway" => WalkingCategory::ProtectedFootway.color(),
+            "Shared-Use Path" => WalkingCategory::SharedUsePath.color(),
+            "Virtual / Implied Footway" => WalkingCategory::VirtualFootway.color(),
+            "Quiet Lane (Mixed)" => WalkingCategory::QuietLaneMixed.color(),
+            "Carriageway (No Footway)" => WalkingCategory::CarriagewayNoFootway.color(),
+            "Steps (Stepped Access)" => WalkingCategory::Steps.color(),
+            _ => WalkingCategory::NoWalkingAccess.color(),
+        };
+        let entry_walk = walk_cat_lengths
+            .entry(s.walking_category.clone())
+            .or_insert((0.0, 0, walk_color.to_string()));
+        entry_walk.0 += s.length_m;
+        entry_walk.1 += 1;
+
+        let cycle_color = match s.cycling_category.as_str() {
+            "Motor-Free Greenway / Bridleway" => CyclingCategory::MotorFreeGreenwayBridleway.color(),
+            "Fully Protected Cycle Track" => CyclingCategory::FullyProtectedCycleTrack.color(),
+            "Stepped Cycle Track" => CyclingCategory::SteppedCycleTrack.color(),
+            "Shared-Use Path / Track" => CyclingCategory::SharedUsePathTrack.color(),
+            "Light Segregation" => CyclingCategory::LightSegregation.color(),
+            "Cycle Lane (Mandatory / Advisory)" => CyclingCategory::CycleLane.color(),
+            "Quiet Lane / Country Lane" => CyclingCategory::QuietLaneCountryLane.color(),
+            "Mixed Traffic Road" => CyclingCategory::MixedTrafficRoad.color(),
+            _ => CyclingCategory::NoCyclingAccess.color(),
+        };
+        let entry_cycle = cycle_cat_lengths
+            .entry(s.cycling_category.clone())
+            .or_insert((0.0, 0, cycle_color.to_string()));
+        entry_cycle.0 += s.length_m;
+        entry_cycle.1 += 1;
 
         if let Some(spd) = s.speed_limit_mph {
             speed_sum_weighted += spd * s.length_m;
@@ -472,43 +614,32 @@ fn compute_summary_statistics(
 
     let total_length_km = total_length_m / 1000.0;
 
-    let mut los_breakdown = HashMap::new();
-    for (label, (len_m, count, color)) in los_lengths {
-        let len_km = len_m / 1000.0;
-        let percentage = if total_length_m > 0.0 {
-            (len_m / total_length_m) * 100.0
-        } else {
-            0.0
-        };
-        los_breakdown.insert(
-            label,
-            CategoryMetric {
-                length_km: (len_km * 100.0).round() / 100.0,
-                percentage: (percentage * 10.0).round() / 10.0,
-                count,
-                color,
-            },
-        );
-    }
+    let to_metric_map = |raw: HashMap<String, (f64, usize, String)>| -> HashMap<String, CategoryMetric> {
+        raw.into_iter()
+            .map(|(label, (len_m, count, color))| {
+                let len_km = len_m / 1000.0;
+                let percentage = if total_length_m > 0.0 {
+                    (len_m / total_length_m) * 100.0
+                } else {
+                    0.0
+                };
+                (
+                    label,
+                    CategoryMetric {
+                        length_km: (len_km * 100.0).round() / 100.0,
+                        percentage: (percentage * 10.0).round() / 10.0,
+                        count,
+                        color,
+                    },
+                )
+            })
+            .collect()
+    };
 
-    let mut infra_breakdown = HashMap::new();
-    for (label, (len_m, count, color)) in infra_lengths {
-        let len_km = len_m / 1000.0;
-        let percentage = if total_length_m > 0.0 {
-            (len_m / total_length_m) * 100.0
-        } else {
-            0.0
-        };
-        infra_breakdown.insert(
-            label,
-            CategoryMetric {
-                length_km: (len_km * 100.0).round() / 100.0,
-                percentage: (percentage * 10.0).round() / 10.0,
-                count,
-                color,
-            },
-        );
-    }
+    let los_breakdown = to_metric_map(los_lengths);
+    let infra_breakdown = to_metric_map(infra_lengths);
+    let walking_breakdown = to_metric_map(walk_cat_lengths);
+    let cycling_breakdown = to_metric_map(cycle_cat_lengths);
 
     // Suitable = Grade A or B (los_score >= 3)
     let high_len_m = segments
@@ -543,6 +674,8 @@ fn compute_summary_statistics(
         total_segments: segments.len(),
         los_breakdown,
         infra_breakdown,
+        walking_breakdown,
+        cycling_breakdown,
         high_med_pct: pct_of(high_len_m),
         unsuitable_pct: pct_of(unsuitable_len_m),
         average_speed_mph,

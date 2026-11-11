@@ -135,7 +135,7 @@ pub fn lookup_level_of_service(
         return LevelOfServiceScore::UnsuitableMixed;
     }
 
-    if infra == InfrastructureType::OffRoadPath {
+    if infra == InfrastructureType::OffRoadPath || infra == InfrastructureType::BridlewayGreenway {
         return LevelOfServiceScore::High;
     }
 
@@ -144,8 +144,13 @@ pub fn lookup_level_of_service(
     }
 
     let mapped_infra = match infra {
-        InfrastructureType::LightSegregation => InfrastructureType::SegregatedTrackNarrow,
+        InfrastructureType::LightSegregation | InfrastructureType::SteppedCycleTrack => {
+            InfrastructureType::SegregatedTrackNarrow
+        }
         InfrastructureType::BusLane => InfrastructureType::PaintedCycleLane,
+        InfrastructureType::VirtualFootway | InfrastructureType::QuietLane => {
+            InfrastructureType::MixedTrafficStreet
+        }
         other => other,
     };
 
@@ -237,7 +242,7 @@ pub fn score_cycling_grade(
         // England DfT LTN 1/20 Fig 4.1 (`atf-lab/osmactive/data/los_england.csv`)
         let aadt_band = classify_aadt_ltn120(aadt);
         match infra {
-            InfrastructureType::OffRoadPath => MmlosGrade::A,
+            InfrastructureType::OffRoadPath | InfrastructureType::BridlewayGreenway => MmlosGrade::A,
             InfrastructureType::SegregatedTrackWide => {
                 if speed_mph >= 50.0 {
                     MmlosGrade::B
@@ -252,7 +257,7 @@ pub fn score_cycling_grade(
                     MmlosGrade::B
                 }
             }
-            InfrastructureType::LightSegregation => {
+            InfrastructureType::SteppedCycleTrack | InfrastructureType::LightSegregation => {
                 if speed_mph <= 20.0 {
                     MmlosGrade::A
                 } else if speed_mph <= 30.0 {
@@ -290,7 +295,9 @@ pub fn score_cycling_grade(
                     MmlosGrade::E
                 }
             }
-            InfrastructureType::MixedTrafficStreet => {
+            InfrastructureType::QuietLane
+            | InfrastructureType::VirtualFootway
+            | InfrastructureType::MixedTrafficStreet => {
                 if speed_mph <= 20.0 {
                     match aadt_band {
                         "0 to 1999" => MmlosGrade::B,
@@ -344,11 +351,33 @@ pub fn score_walking_grade(
     let aadt_val = aadt.unwrap_or(0);
 
     let mut grade = match infra {
-        InfrastructureType::PedestrianFootway | InfrastructureType::OffRoadPath => {
+        InfrastructureType::PedestrianFootway
+        | InfrastructureType::OffRoadPath
+        | InfrastructureType::BridlewayGreenway => {
             if width_m.map(|w| w < 1.5).unwrap_or(false) {
                 MmlosGrade::B
             } else {
                 MmlosGrade::A
+            }
+        }
+        InfrastructureType::VirtualFootway => {
+            if speed_mph < 30.0 && aadt_val < 2000 {
+                MmlosGrade::A
+            } else if speed_mph < 30.0 && aadt_val < 4000 {
+                MmlosGrade::B
+            } else if speed_mph < 40.0 {
+                MmlosGrade::C
+            } else {
+                MmlosGrade::E
+            }
+        }
+        InfrastructureType::QuietLane => {
+            if speed_mph < 30.0 && aadt_val < 1000 {
+                MmlosGrade::A
+            } else if speed_mph < 30.0 && aadt_val < 2000 {
+                MmlosGrade::B
+            } else {
+                MmlosGrade::D
             }
         }
         InfrastructureType::SharedFootway => {

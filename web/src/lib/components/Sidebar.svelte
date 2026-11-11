@@ -67,9 +67,9 @@
 
   const MODES: { id: TravelMode; label: string; hint: string }[] = [
     { id: 'multimodal', label: 'Multi-Modal', hint: 'Composite Walking + Wheeling + Cycling MMLoS' },
-    { id: 'walking', label: 'Walking', hint: 'Pedestrian footways, crossings, lighting & traffic stress' },
+    { id: 'walking', label: 'Walking', hint: 'Pedestrian footways, crossings, PRoW, lighting & traffic stress' },
     { id: 'wheeling', label: 'Wheeling', hint: 'Wheelchair & step-free accessibility, width, surface & gradient' },
-    { id: 'cycling', label: 'Cycling', hint: 'Cycle separation, speed & AADT matrix (LTN 1/20 or CbD)' }
+    { id: 'cycling', label: 'Cycling', hint: 'Cycle separation, speed & AADT matrix (LTN 1/20, Rural 2026 or CbD)' }
   ];
 
   let activeOverridesCount = $derived.by(() => {
@@ -135,6 +135,15 @@
             title="DfT Local Transport Note 1/20 (England)"
           >
             LTN 1/20
+          </button>
+          <button
+            type="button"
+            class="std-btn"
+            class:active={config.standard === 'rural2026'}
+            onclick={() => selectStandard('rural2026')}
+            title="Active Travel England Rural Design Guide (July 2026) — Table 4-3, PRoW & surfacing"
+          >
+            Rural 2026
           </button>
           <button
             type="button"
@@ -464,7 +473,7 @@
             </button>
           </div>
           <p class="method-note">
-            Powered by <strong>multilevelos-core</strong> in Rust/WebAssembly. Scores street links &amp; polygonized junctions in &lt;15ms across Walking, Wheeling &amp; Cycling using 5m R-tree sidepath road association, DfT LTN 1/20 &amp; Transport Scotland CbD tables.
+            Powered by <strong>multilevelos-core</strong> in Rust/WebAssembly. Scores street links &amp; polygonized junctions in &lt;15ms across Walking, Wheeling &amp; Cycling using 5m R-tree sidepath road association, DfT LTN 1/20, ATE Rural Design Guide (2026) &amp; Transport Scotland CbD tables.
           </p>
         </div>
       {/if}

@@ -26,8 +26,15 @@ export interface UrlStateSnapshot {
 }
 
 const VALID_MODES: TravelMode[] = ['multimodal', 'walking', 'wheeling', 'cycling'];
-const VALID_STANDARDS: DesignStandard[] = ['ltn120', 'cbd'];
-const VALID_COLORS: ColorMode[] = ['los', 'infrastructure', 'speed', 'traffic'];
+const VALID_STANDARDS: DesignStandard[] = ['ltn120', 'rural2026', 'cbd'];
+const VALID_COLORS: ColorMode[] = [
+  'los',
+  'walking_category',
+  'cycling_category',
+  'infrastructure',
+  'speed',
+  'traffic'
+];
 const VALID_BASEMAPS: BasemapId[] = ['light', 'dark', 'voyager', 'cyclosm', 'satellite'];
 
 export function readUrlState(): UrlStateSnapshot {
