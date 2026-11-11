@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-/// Returns default road class-based Annual Average Daily Traffic (AADT) estimates
+/// Returns default road class-based Annual Average Daily Traffic (AADT) estimates (`atf-lab/osmactive`)
 pub fn default_aadt_estimates() -> HashMap<String, u32> {
     let mut map = HashMap::new();
     map.insert("motorway".to_string(), 20000);
@@ -48,7 +48,7 @@ pub fn estimate_traffic_aadt(
     base_aadt.map(|v| ((v as f64) * multiplier).round().max(0.0) as u32)
 }
 
-/// Classifies numeric AADT into CbD AADT character ranges
+/// Classifies numeric AADT into Scottish CbD AADT bands
 pub fn classify_aadt_category(aadt: Option<u32>) -> &'static str {
     match aadt {
         None => "0 to 999",
@@ -56,5 +56,16 @@ pub fn classify_aadt_category(aadt: Option<u32>) -> &'static str {
         Some(v) if v < 2000 => "1000 to 1999",
         Some(v) if v < 4000 => "2000 to 3999",
         Some(_) => "4000+",
+    }
+}
+
+/// Classifies numeric AADT into England DfT LTN 1/20 AADT bands (`atf-lab/osmactive/data/los_england.csv`)
+pub fn classify_aadt_ltn120(aadt: Option<u32>) -> &'static str {
+    match aadt {
+        None => "0 to 1999",
+        Some(v) if v < 2000 => "0 to 1999",
+        Some(v) if v < 4000 => "2000 to 3999",
+        Some(v) if v < 6000 => "4000 to 5999",
+        Some(_) => "6000+",
     }
 }

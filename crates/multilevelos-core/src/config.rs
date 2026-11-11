@@ -1,8 +1,55 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TravelMode {
+    #[default]
+    Multimodal,
+    Walking,
+    Wheeling,
+    Cycling,
+}
+
+impl TravelMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TravelMode::Multimodal => "multimodal",
+            TravelMode::Walking => "walking",
+            TravelMode::Wheeling => "wheeling",
+            TravelMode::Cycling => "cycling",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DesignStandard {
+    #[default]
+    Ltn120,
+    Cbd,
+}
+
+impl DesignStandard {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DesignStandard::Ltn120 => "ltn120",
+            DesignStandard::Cbd => "cbd",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LosConfig {
+    #[serde(default)]
+    pub active_mode: TravelMode,
+
+    #[serde(default)]
+    pub standard: DesignStandard,
+
+    #[serde(default = "default_true")]
+    pub include_junctions: bool,
+
     #[serde(default = "default_true")]
     pub include_mixed_traffic: bool,
 
@@ -64,6 +111,9 @@ fn default_speed_map() -> HashMap<String, f64> {
 impl Default for LosConfig {
     fn default() -> Self {
         Self {
+            active_mode: TravelMode::default(),
+            standard: DesignStandard::default(),
+            include_junctions: true,
             include_mixed_traffic: default_true(),
             min_offroad_distance: default_min_offroad_distance(),
             min_wide_width: default_min_wide_width(),

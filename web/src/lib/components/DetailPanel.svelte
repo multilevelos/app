@@ -1,78 +1,166 @@
 <script lang="ts">
   import MapButtons from './MapButtons.svelte';
-  import { formatShortLosLabel, getLosTone } from '../palette';
-  import type { SelectedSegment } from '../../types';
+  import { formatShortLosLabel, gradeColor, gradeTone } from '../palette';
+  import type { SelectedFeature } from '../../types';
 
   let {
-    segment = null,
+    feature = null,
     onClose,
     onZoomTo
   }: {
-    segment: SelectedSegment | null;
+    feature: SelectedFeature | null;
     onClose: () => void;
-    onZoomTo: (seg: SelectedSegment) => void;
+    onZoomTo: (feat: SelectedFeature) => void;
   } = $props();
 
-  let badgeTone = $derived(segment ? getLosTone(segment.los_label, segment.los_score) : 'civic');
-  let shortLos = $derived(segment ? formatShortLosLabel(segment.los_label, segment.los_score) : '');
+  let badgeTone = $derived(feature ? gradeTone(feature.active_grade) : 'civic');
+  let shortLos = $derived(
+    feature
+      ? feature.kind === 'segment'
+        ? formatShortLosLabel(feature.los_label, feature.active_grade)
+        : formatShortLosLabel(undefined, feature.active_grade)
+      : ''
+  );
 </script>
 
-{#if segment}
+{#if feature}
   <div class="detail-card panel-card">
     <div class="detail-header">
       <div class="title-wrap">
         <div class="map-badge-group">
           <span class="map-badge {badgeTone}">{shortLos}</span>
-          <span class="map-badge civic">{segment.highway}</span>
+          {#if feature.kind === 'segment'}
+            <span class="map-badge civic">{feature.highway}</span>
+          {:else}
+            <span class="map-badge civic">Junction · {feature.arm_count} arms</span>
+          {/if}
         </div>
-        <h3>{segment.name || 'Unnamed Street'}</h3>
+        <h3>{feature.name || (feature.kind === 'junction' ? `Junction #${feature.junction_id}` : 'Unnamed Street')}</h3>
       </div>
-      <button type="button" class="close-btn" onclick={onClose} aria-label="Close segment details">×</button>
+      <button type="button" class="close-btn" onclick={onClose} aria-label="Close feature details">×</button>
     </div>
 
     <div class="detail-body">
-      <div class="attr-grid">
-        <div class="attr-item">
-          <span class="attr-label">OSM Way ID</span>
-          <span class="attr-value font-mono">{segment.osm_id}</span>
-        </div>
-        <div class="attr-item">
-          <span class="attr-label">Length</span>
-          <span class="attr-value font-mono">{segment.length_m} m</span>
-        </div>
-        <div class="attr-item full">
-          <span class="attr-label">Infrastructure Classification</span>
-          <span class="attr-value">{segment.infrastructure}</span>
-        </div>
-        <div class="attr-item">
-          <span class="attr-label">Speed Limit</span>
-          <span class="attr-value font-mono">
-            {segment.speed_limit_mph != null ? `${segment.speed_limit_mph} mph` : 'Traffic-free'}
+      <!-- Cross-Modal A–E Scorecard -->
+      <div class="scorecard" aria-label="Cross-modal A to E grade scorecard">
+        <div class="sc-cell">
+          <span class="sc-mode">MMLoS</span>
+          <span class="sc-grade" style="background-color: {gradeColor(feature.grade_multimodal)};">
+            {feature.grade_multimodal}
           </span>
         </div>
-        <div class="attr-item">
-          <span class="attr-label">Est. AADT</span>
-          <span class="attr-value font-mono">
-            {segment.estimated_aadt != null ? segment.estimated_aadt.toLocaleString() : 'None'}
+        <div class="sc-cell">
+          <span class="sc-mode">Walk</span>
+          <span class="sc-grade" style="background-color: {gradeColor(feature.grade_walking)};">
+            {feature.grade_walking}
           </span>
         </div>
-        {#if segment.distance_to_road_m != null}
-          <div class="attr-item full">
-            <span class="attr-label">Distance to Adjacent Carriageway</span>
-            <span class="attr-value font-mono">{segment.distance_to_road_m} m</span>
-          </div>
-        {/if}
+        <div class="sc-cell">
+          <span class="sc-mode">Wheel</span>
+          <span class="sc-grade" style="background-color: {gradeColor(feature.grade_wheeling)};">
+            {feature.grade_wheeling}
+          </span>
+        </div>
+        <div class="sc-cell">
+          <span class="sc-mode">Cycle</span>
+          <span class="sc-grade" style="background-color: {gradeColor(feature.grade_cycling)};">
+            {feature.grade_cycling}
+          </span>
+        </div>
       </div>
 
-      <button type="button" class="civic-btn zoom-btn" onclick={() => onZoomTo(segment)}>
+      {#if feature.kind === 'segment'}
+        <div class="attr-grid">
+          <div class="attr-item">
+            <span class="attr-label">OSM Way ID</span>
+            <span class="attr-value font-mono">{feature.osm_id}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Length</span>
+            <span class="attr-value font-mono">{feature.length_m} m</span>
+          </div>
+          <div class="attr-item full">
+            <span class="attr-label">Infrastructure & Facility</span>
+            <span class="attr-value">{feature.infrastructure}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Surface / Lit</span>
+            <span class="attr-value">{feature.surface}{feature.is_lit ? ' · Lit' : ''}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Separation</span>
+            <span class="attr-value">{feature.separation === 'none' ? 'None' : feature.separation}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Effective Speed</span>
+            <span class="attr-value font-mono">
+              {feature.speed_limit_mph != null ? `${feature.speed_limit_mph} mph` : 'Traffic-free'}
+            </span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Est. AADT</span>
+            <span class="attr-value font-mono">
+              {feature.estimated_aadt != null ? feature.estimated_aadt.toLocaleString() : 'None'}
+            </span>
+          </div>
+          {#if feature.width_m != null || feature.incline_pct != null}
+            <div class="attr-item">
+              <span class="attr-label">Tagged Width</span>
+              <span class="attr-value font-mono">
+                {feature.width_m != null ? `${feature.width_m} m` : 'Untagged'}
+              </span>
+            </div>
+            <div class="attr-item">
+              <span class="attr-label">Gradient</span>
+              <span class="attr-value font-mono">
+                {feature.incline_pct != null ? `${feature.incline_pct}%` : 'Flat / untagged'}
+              </span>
+            </div>
+          {/if}
+          {#if feature.distance_to_road_m != null}
+            <div class="attr-item full">
+              <span class="attr-label">Median Distance to Carriageway</span>
+              <span class="attr-value font-mono">{feature.distance_to_road_m} m</span>
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="attr-grid">
+          <div class="attr-item full">
+            <span class="attr-label">Junction Control</span>
+            <span class="attr-value">{feature.control_type}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Max Approach Speed</span>
+            <span class="attr-value font-mono">{feature.max_speed_mph} mph</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Max Approach Flow</span>
+            <span class="attr-value font-mono">{feature.max_aadt.toLocaleString()} AADT</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Tactile / Kerbs</span>
+            <span class="attr-value">{feature.has_tactile_paving ? 'Tagged tactile' : 'Unverified'}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Footprint Radius</span>
+            <span class="attr-value font-mono">{feature.radius_m} m</span>
+          </div>
+        </div>
+      {/if}
+
+      <button type="button" class="civic-btn zoom-btn" onclick={() => onZoomTo(feature)}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        Zoom to Segment
+        Zoom to {feature.kind === 'junction' ? 'Junction' : 'Segment'}
       </button>
 
-      <MapButtons center={segment.center} osmId={segment.osm_id} />
+      <MapButtons
+        center={feature.center}
+        osmId={feature.kind === 'segment' ? feature.osm_id : null}
+      />
     </div>
   </div>
 {/if}
@@ -82,7 +170,7 @@
     position: absolute;
     bottom: 24px;
     right: 24px;
-    width: 320px;
+    width: 332px;
     max-width: calc(100vw - 32px);
     z-index: 25;
     overflow: hidden;
@@ -137,6 +225,45 @@
     padding: 12px 14px;
   }
 
+  .scorecard {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 7px;
+    margin-bottom: 11px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+  }
+
+  .sc-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .sc-mode {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+  }
+
+  .sc-grade {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    border-radius: 5px;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+  }
+
   .attr-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -179,7 +306,7 @@
       right: 10px;
       bottom: 10px;
       width: auto;
-      max-height: 50dvh;
+      max-height: 55dvh;
       overflow-y: auto;
     }
   }

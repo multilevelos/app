@@ -23,11 +23,24 @@ fn main() -> Result<()> {
     let result = engine.run_analysis(&config)?;
 
     println!("============================================");
-    println!("Analysis Summary:");
+    println!("Multi-Modal Level of Service Summary:");
     println!("  Total Segments: {}", result.segments_count);
     println!("  Total Network Length: {:.2} km", result.summary.total_length_km);
-    println!("  High/Medium LoS Suitable: {:.1}%", result.summary.high_med_pct);
-    println!("  Unsuitable or Non-Compliant: {:.1}%", result.summary.unsuitable_pct);
+    println!("  Suitable (Grades A-B): {:.1}%", result.summary.high_med_pct);
+    println!("  Hostile / Barrier (Grade E): {:.1}%", result.summary.unsuitable_pct);
+    println!(
+        "  Cross-Modal A-B: MMLoS {:.1}% | Walk {:.1}% | Wheel {:.1}% | Cycle {:.1}%",
+        result.summary.mode_suitability.multimodal_ab_pct,
+        result.summary.mode_suitability.walking_ab_pct,
+        result.summary.mode_suitability.wheeling_ab_pct,
+        result.summary.mode_suitability.cycling_ab_pct,
+    );
+    println!(
+        "  Junctions Analyzed: {} ({:.1}% Grades A-B, {} signalized)",
+        result.junctions_count,
+        result.summary.junctions.suitable_pct,
+        result.summary.junctions.signalized_count,
+    );
     println!("  Average Speed Limit: {:.1} mph", result.summary.average_speed_mph);
     println!("============================================");
 

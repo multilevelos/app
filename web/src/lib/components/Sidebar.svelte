@@ -4,10 +4,12 @@
   import { PRESET_LOCATIONS } from '../palette';
   import type {
     ColorMode,
+    DesignStandard,
     LegendMetricRow,
     LosConfig,
     PresetLocation,
-    SummaryStats
+    SummaryStats,
+    TravelMode
   } from '../../types';
 
   let {
@@ -17,10 +19,12 @@
     colorMode = $bindable('los'),
     legendRows = [],
     hiddenValues = [],
+    showJunctions = true,
     selectedPresetId = null,
     isLoading = false,
     loadingMessage = '',
     onCloseMobile = () => {},
+    onToggleJunctions = () => {},
     onToggleLegendItem,
     onIsolateLegendItem,
     onShowAllLegend,
@@ -28,6 +32,7 @@
     onConfigChange,
     onResetConfig,
     onExportGeoJSON,
+    onExportJunctionsGeoJSON = () => {},
     onExportCSV,
     onFileUpload
   }: {
@@ -37,10 +42,12 @@
     colorMode: ColorMode;
     legendRows: LegendMetricRow[];
     hiddenValues: string[];
+    showJunctions?: boolean;
     selectedPresetId: string | null;
     isLoading: boolean;
     loadingMessage: string;
     onCloseMobile?: () => void;
+    onToggleJunctions?: () => void;
     onToggleLegendItem: (val: string) => void;
     onIsolateLegendItem: (val: string) => void;
     onShowAllLegend: () => void;
@@ -48,6 +55,7 @@
     onConfigChange: () => void;
     onResetConfig: () => void;
     onExportGeoJSON: () => void;
+    onExportJunctionsGeoJSON?: () => void;
     onExportCSV: () => void;
     onFileUpload: (file: File) => void;
   } = $props();
@@ -57,6 +65,13 @@
   let exportOpen = $state(false);
   let fileInput = $state<HTMLInputElement>();
 
+  const MODES: { id: TravelMode; label: string; hint: string }[] = [
+    { id: 'multimodal', label: 'Multi-Modal', hint: 'Composite Walking + Wheeling + Cycling MMLoS' },
+    { id: 'walking', label: 'Walking', hint: 'Pedestrian footways, crossings, lighting & traffic stress' },
+    { id: 'wheeling', label: 'Wheeling', hint: 'Wheelchair & step-free accessibility, width, surface & gradient' },
+    { id: 'cycling', label: 'Cycling', hint: 'Cycle separation, speed & AADT matrix (LTN 1/20 or CbD)' }
+  ];
+
   let activeOverridesCount = $derived.by(() => {
     let n = 0;
     if (!config.include_mixed_traffic) n++;
@@ -65,6 +80,18 @@
     if (Math.abs(config.min_wide_width - 2.0) > 0.01) n++;
     return n;
   });
+
+  function selectMode(m: TravelMode) {
+    if (config.active_mode === m) return;
+    config.active_mode = m;
+    onConfigChange();
+  }
+
+  function selectStandard(std: DesignStandard) {
+    if (config.standard === std) return;
+    config.standard = std;
+    onConfigChange();
+  }
 
   function handleFileSelected(e: Event) {
     const target = e.target as HTMLInputElement;
@@ -95,14 +122,65 @@
   {/if}
 
   <div class="drawer-scroll">
-    <!-- Always-On Headline KPIs & Composition Bar -->
-    <KPICards {summary} rows={legendRows} />
+    <!-- Multi-Modal Mode Switcher & Design Standard Toggle -->
+    <div class="mode-switcher-card">
+      <div class="ms-row-head">
+        <span class="ms-label">Active Mode</span>
+        <div class="std-segmented" role="group" aria-label="Design standard">
+          <button
+            type="button"
+            class="std-btn"
+            class:active={config.standard === 'ltn120'}
+            onclick={() => selectStandard('ltn120')}
+            title="DfT Local Transport Note 1/20 (England)"
+          >
+            LTN 1/20
+          </button>
+          <button
+            type="button"
+            class="std-btn"
+            class:active={config.standard === 'cbd'}
+            onclick={() => selectStandard('cbd')}
+            title="Transport Scotland Cycling by Design (Scotland)"
+          >
+            CbD
+          </button>
+        </div>
+      </div>
 
-    <!-- Actionable Interactive Map Legend -->
+      <div class="mode-pills" role="tablist" aria-label="Travel mode">
+        {#each MODES as m (m.id)}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={config.active_mode === m.id}
+            class="mode-pill"
+            class:active={config.active_mode === m.id}
+            onclick={() => selectMode(m.id)}
+            title={m.hint}
+          >
+            {m.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <!-- Always-On Headline KPIs, Composition Bar & Cross-Modal Suitability -->
+    <KPICards
+      {summary}
+      rows={legendRows}
+      activeMode={config.active_mode}
+      onSelectMode={selectMode}
+    />
+
+    <!-- Actionable Interactive Map Legend + Junctions Toggle -->
     <Legend
       bind:colorMode
       rows={legendRows}
       {hiddenValues}
+      {showJunctions}
+      junctionStats={summary?.junctions ?? null}
+      {onToggleJunctions}
       onToggleItem={onToggleLegendItem}
       onIsolateItem={onIsolateLegendItem}
       onShowAll={onShowAllLegend}
@@ -137,7 +215,7 @@
               onchange={onConfigChange}
             />
           </label>
-          <p class="hint">When unchecked, only dedicated tracks, lanes, and off-road paths are scored.</p>
+          <p class="hint">When unchecked, only dedicated tracks, footways, lanes, and off-road paths are scored.</p>
 
           <div class="sub-divider"></div>
 
@@ -271,7 +349,7 @@
 
           <div class="slider-group">
             <div class="s-head">
-              <span>Off-Road Distance Threshold</span>
+              <span>Off-Road / Sidepath Buffer</span>
               <span class="s-val font-mono">{config.min_offroad_distance} m</span>
             </div>
             <input
@@ -376,14 +454,17 @@
         <div class="acc-body">
           <div class="export-grid">
             <button type="button" class="civic-btn exp-btn" onclick={onExportGeoJSON}>
-              GeoJSON
+              Links GeoJSON
             </button>
-            <button type="button" class="outline-btn exp-btn" onclick={onExportCSV}>
-              Summary CSV
+            <button type="button" class="outline-btn exp-btn" onclick={onExportJunctionsGeoJSON}>
+              Junctions GeoJSON
+            </button>
+            <button type="button" class="outline-btn exp-btn full-span" onclick={onExportCSV}>
+              Summary Metrics CSV
             </button>
           </div>
           <p class="method-note">
-            Powered by <strong>multilevelos-core</strong> in Rust/WebAssembly. Evaluates street links in &lt;15ms using R-tree spatial proximity, road-hierarchy AADT &amp; speed models, and active travel design guidance.
+            Powered by <strong>multilevelos-core</strong> in Rust/WebAssembly. Scores street links &amp; polygonized junctions in &lt;15ms across Walking, Wheeling &amp; Cycling using 5m R-tree sidepath road association, DfT LTN 1/20 &amp; Transport Scotland CbD tables.
           </p>
         </div>
       {/if}
@@ -468,6 +549,91 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+
+  .mode-switcher-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 9px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .ms-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .ms-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  .std-segmented {
+    display: inline-flex;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .std-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .std-btn.active {
+    background: var(--accent-civic);
+    color: #ffffff;
+  }
+
+  .mode-pills {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+  }
+
+  .mode-pill {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: all 0.14s ease;
+  }
+
+  .mode-pill:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+
+  .mode-pill.active {
+    background: var(--accent-civic);
+    border-color: var(--accent-civic);
+    color: #ffffff;
+    font-weight: 700;
   }
 
   .accordion {
@@ -648,8 +814,13 @@
     gap: 8px;
   }
 
+  .full-span {
+    grid-column: 1 / -1;
+  }
+
   .exp-btn {
     height: 32px;
+    font-size: 11.5px;
   }
 
   .method-note {

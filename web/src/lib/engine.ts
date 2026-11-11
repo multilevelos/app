@@ -40,6 +40,9 @@ export class LosEngineWrapper {
       return JSON.parse(WasmLosEngine.getDefaultConfig());
     } catch {
       return {
+        active_mode: 'multimodal',
+        standard: 'ltn120',
+        include_junctions: true,
         include_mixed_traffic: true,
         min_offroad_distance: 10.0,
         min_wide_width: 2.0,
