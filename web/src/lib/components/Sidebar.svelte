@@ -99,17 +99,16 @@
   <!-- Brand Header -->
   <div class="brand-header">
     <div class="logo-row">
-      <div class="logo-badge">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="18.5" cy="17.5" r="3.5"/>
-          <circle cx="5.5" cy="17.5" r="3.5"/>
-          <circle cx="15" cy="5" r="1"/>
-          <path d="M12 17.5V14l-3-3 4-3 2 3h2"/>
+      <div class="logo-badge" title="MultiLevelOS — Multi-Modal Level of Service">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 3 21 7.5 12 12 3 7.5" fill="#22c55e" fill-opacity="0.2" stroke="#22c55e" stroke-width="2"/>
+          <polyline points="3 12 12 16.5 21 12" stroke="#38bdf8" stroke-width="2"/>
+          <polyline points="3 16.5 12 21 21 16.5" stroke="#eab308" stroke-width="2"/>
         </svg>
       </div>
       <div>
         <h1 class="brand-title">MultiLevelOS</h1>
-        <div class="brand-subtitle">Cycling Level of Service (LoS) & AADT</div>
+        <div class="brand-subtitle">Multi-Modal Level of Service (LoS)</div>
       </div>
     </div>
   </div>
@@ -218,7 +217,7 @@
           onchange={handleFileSelected}
           style="display: none;"
         />
-        <button class="btn-secondary" onclick={() => fileInput.click()}>
+        <button class="btn-secondary" onclick={() => fileInput?.click()}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Select Local JSON File
         </button>
