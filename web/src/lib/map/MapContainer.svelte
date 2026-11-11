@@ -102,17 +102,21 @@
       };
     }
 
-    if (id === 'opencyclemap') {
+    if (id === 'cyclosm') {
       return {
         version: 8,
         sources: {
           'basemap-base': {
             type: 'raster',
             tiles: [
-              'https://tile.thunderforest.com/cycle/{z}/{x}/{y}@2x.png?apikey=e26a96d14f5e41d78dd4842ac12f458c'
+              'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+              'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+              'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png'
             ],
             tileSize: 256,
-            attribution: 'Maps &copy; Thunderforest, Data &copy; OpenStreetMap contributors'
+            maxzoom: 20,
+            attribution:
+              '<a href="https://github.com/cyclosm/cyclosm-cartocss-style/releases" target="_blank">CyclOSM</a> | &copy; OpenStreetMap contributors'
           }
         },
         layers: [
@@ -121,7 +125,7 @@
             id: 'basemap-base-layer',
             type: 'raster',
             source: 'basemap-base',
-            paint: { 'raster-opacity': 0.72 }
+            paint: { 'raster-opacity': 0.78 }
           }
         ]
       };

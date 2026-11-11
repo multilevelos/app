@@ -34,7 +34,7 @@ export interface LosAnalysisOutput {
 
 export type ColorMode = 'los' | 'infrastructure' | 'speed' | 'traffic';
 export type ThemeMode = 'light' | 'dark';
-export type BasemapId = 'light' | 'dark' | 'voyager' | 'opencyclemap' | 'satellite';
+export type BasemapId = 'light' | 'dark' | 'voyager' | 'cyclosm' | 'satellite';
 
 export interface SelectedSegment {
   osm_id: number;

@@ -16,7 +16,7 @@ export interface UrlStateSnapshot {
 }
 
 const VALID_COLORS: ColorMode[] = ['los', 'infrastructure', 'speed', 'traffic'];
-const VALID_BASEMAPS: BasemapId[] = ['light', 'dark', 'voyager', 'opencyclemap', 'satellite'];
+const VALID_BASEMAPS: BasemapId[] = ['light', 'dark', 'voyager', 'cyclosm', 'satellite'];
 
 export function readUrlState(): UrlStateSnapshot {
   if (typeof window === 'undefined') return {};
@@ -37,8 +37,9 @@ export function readUrlState(): UrlStateSnapshot {
       .filter(Boolean);
   }
 
-  const basemap = params.get('basemap') as BasemapId | null;
-  if (basemap && VALID_BASEMAPS.includes(basemap)) out.basemap = basemap;
+  const rawBasemap = params.get('basemap');
+  const mappedBasemap = (rawBasemap === 'opencyclemap' ? 'cyclosm' : rawBasemap) as BasemapId | null;
+  if (mappedBasemap && VALID_BASEMAPS.includes(mappedBasemap)) out.basemap = mappedBasemap;
 
   const labels = params.get('labels');
   if (labels === '0' || labels === 'false') out.showPlaceNames = false;
