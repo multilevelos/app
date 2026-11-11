@@ -33,6 +33,26 @@ export interface LosAnalysisOutput {
 }
 
 export type ColorMode = 'los' | 'infrastructure' | 'speed' | 'traffic';
+export type ThemeMode = 'light' | 'dark';
+export type BasemapId = 'light' | 'dark' | 'voyager' | 'cyclosm' | 'satellite';
+
+export interface SelectedSegment {
+  osm_id: number;
+  name: string;
+  highway: string;
+  infrastructure: string;
+  speed_limit_mph: number | null;
+  speed_category: string;
+  estimated_aadt: number | null;
+  aadt_category: string;
+  distance_to_road_m: number | null;
+  length_m: number;
+  los_score: number;
+  los_label: string;
+  los_color: string;
+  center?: [number, number] | null;
+  bbox?: [number, number, number, number] | null;
+}
 
 export interface PresetLocation {
   id: string;
@@ -50,4 +70,14 @@ export interface SearchResult {
   lat: string;
   lon: string;
   boundingbox: [string, string, string, string]; // [minLat, maxLat, minLng, maxLng]
+}
+
+export interface LegendMetricRow {
+  value: string;
+  label: string;
+  desc?: string;
+  color: string;
+  km: number;
+  pct: number;
+  count: number;
 }

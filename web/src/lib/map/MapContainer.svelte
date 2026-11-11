@@ -1,122 +1,282 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import maplibregl from 'maplibre-gl';
-  import type { ColorMode } from '../../types';
+  import {
+    escapeHtml,
+    formatShortLosLabel,
+    getColorExpression,
+    getFilterExpression,
+    getLosTone
+  } from '../palette';
+  import { featureBbox, featureCenter, mapButtonsHtml } from '../components/MapButtons.svelte';
+  import type { BasemapId, ColorMode, SelectedSegment } from '../../types';
   import type { FeatureCollection } from 'geojson';
 
   let {
     geojson = null,
     colorMode = 'los',
-    isLoading = false,
-    onFetchViewport = () => {},
-    onSelectSegment = (segment: any) => {}
+    hiddenValues = [],
+    basemap = 'light',
+    showPlaceNames = true,
+    sidebarOpen = true,
+    onSelectSegment = (_seg: SelectedSegment | null) => {}
   }: {
     geojson: FeatureCollection | null;
     colorMode: ColorMode;
-    isLoading?: boolean;
-    onFetchViewport?: () => void;
-    onSelectSegment?: (segment: any) => void;
+    hiddenValues?: string[];
+    basemap?: BasemapId;
+    showPlaceNames?: boolean;
+    sidebarOpen?: boolean;
+    onSelectSegment?: (seg: SelectedSegment | null) => void;
   } = $props();
 
   let mapContainer: HTMLDivElement;
   let map: maplibregl.Map | null = null;
-  let popup: maplibregl.Popup | null = null;
+  let clickPopup: maplibregl.Popup | null = null;
+  let hoverPopup: maplibregl.Popup | null = null;
+  let hoveredFeatureId: string | number | null = null;
+  let isTouchDevice = false;
 
-  const BASEMAP_STYLES = {
-    dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-    positron: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-    voyager: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json'
-  };
+  // Vector GL styles (CARTO MVT) + open keyless CyclOSM & Esri Satellite styles (zero watermarks / API keys)
+  function buildStyleSpec(id: BasemapId): string | maplibregl.StyleSpecification {
+    if (id === 'dark') {
+      return 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+    }
 
-  let currentBasemap = $state<'dark' | 'positron' | 'voyager'>('dark');
+    if (id === 'voyager') {
+      return 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+    }
+
+    if (id === 'satellite') {
+      return {
+        version: 8,
+        sources: {
+          'basemap-base': {
+            type: 'raster',
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+            ],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: 'Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics'
+          },
+          'basemap-labels': {
+            type: 'raster',
+            tiles: [
+              'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+            ],
+            tileSize: 256,
+            maxzoom: 19
+          }
+        },
+        layers: [{ id: 'basemap-base-layer', type: 'raster', source: 'basemap-base' }]
+      };
+    }
+
+    if (id === 'cyclosm') {
+      return {
+        version: 8,
+        sources: {
+          'basemap-base': {
+            type: 'raster',
+            tiles: [
+              'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+              'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+              'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            maxzoom: 20,
+            attribution:
+              '<a href="https://github.com/cyclosm/cyclosm-cartocss-style/releases" target="_blank">CyclOSM</a> | &copy; OpenStreetMap contributors'
+          }
+        },
+        layers: [
+          { id: 'basemap-bg', type: 'background', paint: { 'background-color': '#f8fafc' } },
+          {
+            id: 'basemap-base-layer',
+            type: 'raster',
+            source: 'basemap-base',
+            paint: { 'raster-opacity': 0.78 }
+          }
+        ]
+      };
+    }
+
+    // Default: 'light' Dignified Civic Light Vector Canvas (Positron GL)
+    return 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+  }
+
+  function applyPlaceNamesVisibility(show: boolean) {
+    if (!map || !map.isStyleLoaded()) return;
+    const vis = show ? 'visible' : 'none';
+    if (map.getLayer('basemap-labels-layer')) {
+      map.setLayoutProperty('basemap-labels-layer', 'visibility', vis);
+    }
+    const layers = map.getStyle()?.layers ?? [];
+    for (const l of layers) {
+      if (l.type === 'symbol' && !l.id.startsWith('los-')) {
+        map.setLayoutProperty(l.id, 'visibility', vis);
+      }
+    }
+  }
+
+  function getCasingColor(id: BasemapId): string {
+    return id === 'dark' || id === 'satellite' ? '#0f172a' : '#ffffff';
+  }
+
+  function viewportPadding() {
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth > 768;
+    return {
+      top: 48,
+      bottom: 48,
+      left: isDesktop && sidebarOpen ? 390 : 48,
+      right: 48
+    };
+  }
 
   onMount(() => {
+    isTouchDevice =
+      typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
+
     map = new maplibregl.Map({
       container: mapContainer,
-      style: BASEMAP_STYLES[currentBasemap],
-      center: [-3.195, 55.952], // Edinburgh default
-      zoom: 14.5,
+      style: buildStyleSpec(basemap),
+      center: [-3.195, 55.952],
+      zoom: 14.2,
       pitch: 0,
       bearing: 0,
+      hash: 'map',
+      canvasContextAttributes: { preserveDrawingBuffer: true },
       attributionControl: false
     });
+    appliedBasemap = basemap;
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: false
+      }),
+      'top-right'
+    );
+    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     map.addControl(
       new maplibregl.AttributionControl({
         compact: true,
-        customAttribution: '© OpenStreetMap contributors | MultiLevelOS'
+        customAttribution: 'MultiLevelOS'
       }),
       'bottom-right'
     );
 
-    map.on('load', () => {
-      initLayers();
-      if (geojson) {
-        updateSource(geojson);
-      }
+    hoverPopup = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 12,
+      className: 'hover-tooltip'
     });
 
-    map.on('mousemove', 'los-network-lines', () => {
-      if (!map) return;
+    map.on('load', () => {
+      initLayers();
+      if (geojson) updateSource(geojson);
+    });
+
+    map.on('mousemove', 'los-network-lines', (e) => {
+      if (!map || !e.features || e.features.length === 0) return;
       map.getCanvas().style.cursor = 'pointer';
+
+      const feat = e.features[0];
+      if (hoveredFeatureId !== null && hoveredFeatureId !== feat.id) {
+        map.setFeatureState({ source: 'los-network', id: hoveredFeatureId }, { hover: false });
+      }
+      if (feat.id !== undefined) {
+        hoveredFeatureId = feat.id;
+        map.setFeatureState({ source: 'los-network', id: feat.id }, { hover: true });
+      }
+
+      if (!isTouchDevice && hoverPopup) {
+        const p = feat.properties || {};
+        const tone = getLosTone(p.los_label, Number(p.los_score));
+        const shortLos = formatShortLosLabel(p.los_label, Number(p.los_score));
+        const spdText =
+          p.speed_limit_mph != null ? `${escapeHtml(p.speed_limit_mph)} mph` : 'Traffic-free';
+        const html = `
+          <div class="map-popup-card">
+            <div class="map-badge-group">
+              <span class="map-badge ${tone}">${escapeHtml(shortLos)}</span>
+              <span class="map-badge">${escapeHtml(p.infrastructure)}</span>
+            </div>
+            <div class="map-popup-title">${escapeHtml(p.name || 'Unnamed Street')}</div>
+            <div class="map-popup-table">
+              <div class="map-cell"><span class="k">Speed / Flow</span><span class="v font-mono">${spdText}${p.estimated_aadt != null ? ' · ' + Number(p.estimated_aadt).toLocaleString() + ' AADT' : ''}</span></div>
+              <div class="map-cell"><span class="k">Length</span><span class="v font-mono">${escapeHtml(p.length_m)} m</span></div>
+            </div>
+          </div>
+        `;
+        hoverPopup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+      }
     });
 
     map.on('mouseleave', 'los-network-lines', () => {
       if (!map) return;
       map.getCanvas().style.cursor = '';
+      if (hoveredFeatureId !== null) {
+        map.setFeatureState({ source: 'los-network', id: hoveredFeatureId }, { hover: false });
+        hoveredFeatureId = null;
+      }
+      hoverPopup?.remove();
     });
 
     map.on('click', 'los-network-lines', (e) => {
       if (!map || !e.features || e.features.length === 0) return;
-      const feature = e.features[0];
-      const props = feature.properties || {};
+      hoverPopup?.remove();
 
-      onSelectSegment(props);
+      const feat = e.features[0];
+      const p = feat.properties || {};
+      const center = featureCenter(feat.geometry) ?? [e.lngLat.lng, e.lngLat.lat];
+      const bbox = featureBbox(feat.geometry);
 
-      const coordinates = e.lngLat;
+      const seg: SelectedSegment = {
+        osm_id: Number(p.osm_id),
+        name: String(p.name || 'Unnamed Street'),
+        highway: String(p.highway || 'road'),
+        infrastructure: String(p.infrastructure || ''),
+        speed_limit_mph: p.speed_limit_mph != null ? Number(p.speed_limit_mph) : null,
+        speed_category: String(p.speed_category || ''),
+        estimated_aadt: p.estimated_aadt != null ? Number(p.estimated_aadt) : null,
+        aadt_category: String(p.aadt_category || ''),
+        distance_to_road_m: p.distance_to_road_m != null ? Number(p.distance_to_road_m) : null,
+        length_m: Number(p.length_m || 0),
+        los_score: Number(p.los_score ?? 0),
+        los_label: String(p.los_label || ''),
+        los_color: String(p.los_color || '#16a34a'),
+        center,
+        bbox
+      };
 
+      onSelectSegment(seg);
+
+      const tone = getLosTone(seg.los_label, seg.los_score);
+      const shortLos = formatShortLosLabel(seg.los_label, seg.los_score);
       const html = `
-        <div style="font-family: inherit; font-size: 13px;">
-          <div style="font-weight: 700; font-size: 14px; margin-bottom: 6px; color: #f8fafc;">
-            ${props.name || 'Unnamed Street'}
+        <div class="map-popup-card">
+          <div class="map-badge-group">
+            <span class="map-badge ${tone}">${escapeHtml(shortLos)}</span>
+            <span class="map-badge civic">${escapeHtml(seg.highway)}</span>
           </div>
-          <div style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; margin-bottom: 8px; background-color: ${props.los_color || '#16a34a'}; color: #ffffff;">
-            LoS: ${props.los_label || 'High'} (Score: ${props.los_score})
+          <div class="map-popup-title">${escapeHtml(seg.name)}</div>
+          <div class="map-popup-table">
+            <div class="map-cell"><span class="k">Infrastructure</span><span class="v">${escapeHtml(seg.infrastructure)}</span></div>
+            <div class="map-cell"><span class="k">Speed limit</span><span class="v font-mono">${seg.speed_limit_mph != null ? seg.speed_limit_mph + ' mph' : 'Traffic-free'}</span></div>
+            <div class="map-cell"><span class="k">Est. AADT</span><span class="v font-mono">${seg.estimated_aadt != null ? seg.estimated_aadt.toLocaleString() : 'None'}</span></div>
+            <div class="map-cell"><span class="k">Length</span><span class="v font-mono">${seg.length_m} m</span></div>
           </div>
-          <div style="display: grid; grid-template-columns: auto auto; gap: 4px 12px; color: #cbd5e1; font-size: 12px;">
-            <span style="color: #94a3b8;">Highway:</span>
-            <span style="font-weight: 500; font-family: monospace;">${props.highway}</span>
-
-            <span style="color: #94a3b8;">Infrastructure:</span>
-            <span style="font-weight: 500;">${props.infrastructure}</span>
-
-            <span style="color: #94a3b8;">Speed Limit:</span>
-            <span style="font-weight: 500;">${props.speed_limit_mph != null ? props.speed_limit_mph + ' mph (' + props.speed_category + ')' : 'Traffic Free'}</span>
-
-            <span style="color: #94a3b8;">Est. AADT:</span>
-            <span style="font-weight: 500;">${props.estimated_aadt != null ? props.estimated_aadt.toLocaleString() + ' (' + props.aadt_category + ')' : 'None (Active)'}</span>
-
-            ${props.distance_to_road_m != null ? `
-              <span style="color: #94a3b8;">Dist to Road:</span>
-              <span style="font-weight: 500;">${props.distance_to_road_m} m</span>
-            ` : ''}
-
-            <span style="color: #94a3b8;">Length:</span>
-            <span style="font-weight: 500;">${props.length_m} m</span>
-          </div>
-          <div style="margin-top: 10px; padding-top: 6px; border-top: 1px solid #334155; font-size: 11px;">
-            <a href="https://www.openstreetmap.org/way/${props.osm_id}" target="_blank" rel="noreferrer" style="color: #38bdf8; text-decoration: none; display: flex; align-items: center; gap: 4px;">
-              View on OpenStreetMap (ID: ${props.osm_id}) ↗
-            </a>
-          </div>
+          ${mapButtonsHtml(center[0], center[1], seg.osm_id)}
         </div>
       `;
 
-      if (popup) popup.remove();
-      popup = new maplibregl.Popup({ offset: 12 })
-        .setLngLat(coordinates)
+      clickPopup?.remove();
+      clickPopup = new maplibregl.Popup({ offset: 12, maxWidth: '290px' })
+        .setLngLat(e.lngLat)
         .setHTML(html)
         .addTo(map);
     });
@@ -125,104 +285,98 @@
   function initLayers() {
     if (!map || !map.isStyleLoaded()) return;
 
+    const firstSymbolId = map
+      .getStyle()
+      ?.layers?.find((l) => l.type === 'symbol' && !l.id.startsWith('los-'))?.id;
+
     if (!map.getSource('los-network')) {
       map.addSource('los-network', {
         type: 'geojson',
+        generateId: true,
         data: geojson || { type: 'FeatureCollection', features: [] }
       });
     }
 
+    const filterExpr = getFilterExpression(colorMode, hiddenValues);
+
     if (!map.getLayer('los-network-casing')) {
+      map.addLayer(
+        {
+          id: 'los-network-casing',
+          type: 'line',
+          source: 'los-network',
+          ...(filterExpr ? { filter: filterExpr } : {}),
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round'
+          },
+          paint: {
+            'line-color': getCasingColor(basemap),
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              8,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 4.5, 2.2],
+              13,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 7.5, 4.8],
+              17,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 12.0, 8.6]
+            ],
+            'line-opacity': 0.88
+          }
+        },
+        firstSymbolId
+      );
+    }
+
+    if (!map.getLayer('los-network-lines')) {
+      map.addLayer(
+        {
+          id: 'los-network-lines',
+          type: 'line',
+          source: 'los-network',
+          ...(filterExpr ? { filter: filterExpr } : {}),
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round'
+          },
+          paint: {
+            'line-color': getColorExpression(colorMode),
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              8,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 3.0, 1.4],
+              13,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 5.4, 3.3],
+              17,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 9.0, 6.2]
+            ],
+            'line-opacity': 0.95
+          }
+        },
+        firstSymbolId
+      );
+    }
+
+    // Satellite raster label overlay
+    if (map.getSource('basemap-labels') && !map.getLayer('basemap-labels-layer')) {
       map.addLayer({
-        id: 'los-network-casing',
-        type: 'line',
-        source: 'los-network',
+        id: 'basemap-labels-layer',
+        type: 'raster',
+        source: 'basemap-labels',
         layout: {
-          'line-cap': 'round',
-          'line-join': 'round'
+          visibility: showPlaceNames ? 'visible' : 'none'
         },
         paint: {
-          'line-color': '#020617',
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            11, 2.5,
-            14, 5.0,
-            17, 8.5
-          ],
-          'line-opacity': 0.75
+          'raster-opacity': 0.92
         }
       });
     }
 
-    if (!map.getLayer('los-network-lines')) {
-      map.addLayer({
-        id: 'los-network-lines',
-        type: 'line',
-        source: 'los-network',
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round'
-        },
-        paint: getLinePaintExpression(colorMode)
-      });
-    }
-  }
-
-  function getLinePaintExpression(mode: ColorMode): any {
-    let colorExpr: any;
-
-    if (mode === 'los') {
-      colorExpr = ['coalesce', ['get', 'los_color'], '#16a34a'];
-    } else if (mode === 'infrastructure') {
-      colorExpr = [
-        'match',
-        ['get', 'infrastructure'],
-        'Segregated Track (wide)', '#054d05',
-        'Off Road Path', '#3a9120',
-        'Segregated Track (narrow)', '#87d668',
-        'Shared Footway', '#ffbf00',
-        'Painted Cycle Lane', '#f97316',
-        /* default */ '#64748b'
-      ];
-    } else if (mode === 'speed') {
-      colorExpr = [
-        'match',
-        ['get', 'speed_category'],
-        '<20 mph', '#22c55e',
-        '20 mph', '#84cc16',
-        '30 mph', '#eab308',
-        '40 mph', '#f97316',
-        '50 mph', '#ef4444',
-        '60+ mph', '#7f1d1d',
-        /* default */ '#22c55e'
-      ];
-    } else {
-      // Traffic AADT
-      colorExpr = [
-        'match',
-        ['get', 'aadt_category'],
-        '0 to 999', '#22c55e',
-        '1000 to 1999', '#eab308',
-        '2000 to 3999', '#f97316',
-        '4000+', '#ef4444',
-        /* default */ '#22c55e'
-      ];
-    }
-
-    return {
-      'line-color': colorExpr,
-      'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        11, 2.0,
-        14, 3.8,
-        17, 6.5
-      ],
-      'line-opacity': 0.95
-    };
+    applyPlaceNamesVisibility(showPlaceNames);
   }
 
   function updateSource(data: FeatureCollection | null) {
@@ -238,33 +392,58 @@
     }
   }
 
+  let appliedBasemap: BasemapId | null = null;
+
   $effect(() => {
-    if (geojson) {
-      updateSource(geojson);
+    const nextBasemap = basemap;
+    if (map && appliedBasemap !== null && nextBasemap !== appliedBasemap) {
+      appliedBasemap = nextBasemap;
+      hoveredFeatureId = null;
+      map.setStyle(buildStyleSpec(nextBasemap));
+      map.once('style.load', () => {
+        initLayers();
+        updateSource(geojson);
+      });
     }
   });
 
   $effect(() => {
-    if (map && map.isStyleLoaded() && map.getLayer('los-network-lines')) {
-      const expr = getLinePaintExpression(colorMode);
-      map.setPaintProperty('los-network-lines', 'line-color', expr['line-color']);
+    const data = geojson;
+    if (data && map) {
+      updateSource(data);
     }
   });
 
-  export function flyToBounds(bbox: [number, number, number, number]) {
+  $effect(() => {
+    const mode = colorMode;
+    const hidden = hiddenValues;
+    if (!map || !map.isStyleLoaded()) return;
+    if (map.getLayer('los-network-lines')) {
+      map.setPaintProperty('los-network-lines', 'line-color', getColorExpression(mode));
+    }
+    const filterExpr = getFilterExpression(mode, hidden);
+    for (const layerId of ['los-network-casing', 'los-network-lines']) {
+      if (map.getLayer(layerId)) {
+        map.setFilter(layerId, filterExpr);
+      }
+    }
+  });
+
+  $effect(() => {
+    const show = showPlaceNames;
+    applyPlaceNamesVisibility(show);
+  });
+
+  export function flyToBounds(bbox: [number, number, number, number], skipIfHashPresent = false) {
     if (!map) return;
+    if (skipIfHashPresent && window.location.hash.includes('map=')) return;
     map.fitBounds(
       [
         [bbox[0], bbox[1]],
         [bbox[2], bbox[3]]
       ],
-      { padding: 40, maxZoom: 16, duration: 1500 }
+      { padding: viewportPadding(), maxZoom: 16.5, duration: 1200 }
     );
-  }
-
-  export function flyToPoint(lng: number, lat: number, zoom: number = 14.5) {
-    if (!map) return;
-    map.flyTo({ center: [lng, lat], zoom, duration: 1500 });
   }
 
   export function getMapBounds(): [number, number, number, number] | null {
@@ -273,62 +452,25 @@
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   }
 
-  function setBasemap(styleKey: 'dark' | 'positron' | 'voyager') {
+  export function exportPng(filename: string = 'multilevelos-map.png') {
     if (!map) return;
-    currentBasemap = styleKey;
-    map.setStyle(BASEMAP_STYLES[styleKey]);
-    map.once('style.load', () => {
-      initLayers();
-      updateSource(geojson);
-    });
+    map.triggerRepaint();
+    const dataUrl = map.getCanvas().toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
   }
 
   onDestroy(() => {
+    clickPopup?.remove();
+    hoverPopup?.remove();
     if (map) map.remove();
   });
 </script>
 
-<div class="map-wrapper">
-  <div bind:this={mapContainer} class="map-element"></div>
-
-  <!-- Map Top Controls Overlay -->
-  <div class="map-top-bar">
-    <div class="basemap-selector">
-      <button
-        class="btn-style {currentBasemap === 'dark' ? 'active' : ''}"
-        onclick={() => setBasemap('dark')}
-      >
-        Dark
-      </button>
-      <button
-        class="btn-style {currentBasemap === 'positron' ? 'active' : ''}"
-        onclick={() => setBasemap('positron')}
-      >
-        Light
-      </button>
-      <button
-        class="btn-style {currentBasemap === 'voyager' ? 'active' : ''}"
-        onclick={() => setBasemap('voyager')}
-      >
-        Streets
-      </button>
-    </div>
-
-    <button class="btn-fetch-view {isLoading ? 'fetching' : ''}" onclick={onFetchViewport} disabled={isLoading}>
-      {#if isLoading}
-        <div class="spinner-sm"></div>
-        Downloading OSM...
-      {:else}
-        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-          <path d="M3 3v5h5"/>
-          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
-          <path d="M16 16h5v5"/>
-        </svg>
-        Fetch OSM for Visible View
-      {/if}
-    </button>
-  </div>
+<div class="map-wrapper" class:drawer-open={sidebarOpen}>
+  <div bind:this={mapContainer} class="map-canvas"></div>
 </div>
 
 <style>
@@ -339,90 +481,20 @@
     overflow: hidden;
   }
 
-  .map-element {
+  .map-canvas {
     width: 100%;
     height: 100%;
   }
 
-  .map-top-bar {
-    position: absolute;
-    top: 14px;
-    left: 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    z-index: 10;
-    pointer-events: auto;
-  }
-
-  .basemap-selector {
-    display: flex;
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 3px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-  }
-
-  .btn-style {
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 5px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-style:hover {
-    color: var(--text-primary);
-  }
-
-  .btn-style.active {
-    background: var(--bg-card);
-    color: #38bdf8;
-    font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
-
-  .btn-fetch-view {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(15, 23, 42, 0.9);
-    backdrop-filter: blur(10px);
-    border: 1px solid #0284c7;
-    color: #e0f2fe;
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 4px 8px rgba(2, 132, 199, 0.25);
-    transition: all 0.2s ease;
-  }
-
-  .btn-fetch-view:hover:not(:disabled) {
-    background: #0284c7;
-    color: #ffffff;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 12px rgba(2, 132, 199, 0.35);
-  }
-
-  .btn-fetch-view:disabled {
-    opacity: 0.7;
-    cursor: wait;
-  }
-
-  .spinner-sm {
-    width: 12px;
-    height: 12px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: #38bdf8;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  /* Offset bottom-left scale bar when desktop drawer is open */
+  @media (min-width: 769px) {
+    .map-wrapper.drawer-open :global(.maplibregl-ctrl-bottom-left) {
+      transform: translateX(356px);
+      transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .map-wrapper:not(.drawer-open) :global(.maplibregl-ctrl-bottom-left) {
+      transform: translateX(0);
+      transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+    }
   }
 </style>
