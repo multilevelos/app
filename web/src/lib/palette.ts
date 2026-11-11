@@ -58,6 +58,16 @@ export const PRESET_LOCATIONS: PresetLocation[] = [
     center: [0.122, 52.205],
     zoom: 14.5,
     bbox: [0.1, 52.19, 0.15, 52.22]
+  },
+  {
+    id: 'bakewell',
+    name: 'Peak District (Bakewell & Monsal Trail)',
+    country: 'Derbyshire, UK',
+    description:
+      'ATE Rural Design Guide showcase: Monsal Trail greenway, bridleways, footpaths, restricted byways & country lanes.',
+    center: [-1.678, 53.216],
+    zoom: 14.2,
+    bbox: [-1.705, 53.205, -1.655, 53.232]
   }
 ];
 
@@ -105,6 +115,134 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
       }
     ]
   },
+  walking_category: {
+    id: 'walking_category',
+    title: 'Walking Categories (ATE Rural Guide)',
+    property: 'walking_category',
+    fallbackColor: '#94a3b8',
+    entries: [
+      {
+        value: 'Motor-Free Path / PRoW',
+        label: 'Motor-Free Path / PRoW',
+        desc: 'Public Footpaths, Bridleways, Restricted Byways & greenways (Table 8.1)',
+        color: '#15803d',
+        tone: 'success'
+      },
+      {
+        value: 'Protected Footway',
+        label: 'Protected Footway',
+        desc: 'Kerbed or verge-buffered roadside footway / pedestrian zone (Table 4-3)',
+        color: '#059669',
+        tone: 'success'
+      },
+      {
+        value: 'Shared-Use Path',
+        label: 'Shared-Use Path',
+        desc: 'Shared walking, wheeling & cycling route (Table 4-4, >=3.0m desirable)',
+        color: '#0d9488',
+        tone: 'success'
+      },
+      {
+        value: 'Virtual / Implied Footway',
+        label: 'Virtual / Implied Footway',
+        desc: 'Edge-marked rural carriageway footway (Ch. 7.5 & Table 4-3)',
+        color: '#0284c7',
+        tone: 'civic'
+      },
+      {
+        value: 'Quiet Lane (Mixed)',
+        label: 'Quiet Lane (Mixed)',
+        desc: 'Designated Quiet Lane, BOAT, Home Zone, or <=20mph <1,000 vpd lane (Ch. 7.2)',
+        color: '#65a30d',
+        tone: 'success'
+      },
+      {
+        value: 'Carriageway (No Footway)',
+        label: 'Carriageway (No Footway)',
+        desc: 'Walking in mixed motor traffic with no footway (Table 4-3)',
+        color: '#dc2626',
+        tone: 'danger'
+      },
+      {
+        value: 'Steps (Stepped Access)',
+        label: 'Steps (Stepped Access)',
+        desc: 'Walkable stairs — barrier for wheeling',
+        color: '#9333ea',
+        tone: 'purple'
+      }
+    ]
+  },
+  cycling_category: {
+    id: 'cycling_category',
+    title: 'Cycling Categories (ATE Rural Guide)',
+    property: 'cycling_category',
+    fallbackColor: '#94a3b8',
+    entries: [
+      {
+        value: 'Motor-Free Greenway / Bridleway',
+        label: 'Motor-Free Greenway / Bridleway',
+        desc: 'Off-road cycleway, bridleway, restricted byway or towpath (Ch. 8 & Table 8.1)',
+        color: '#15803d',
+        tone: 'success'
+      },
+      {
+        value: 'Fully Protected Cycle Track',
+        label: 'Fully Protected Cycle Track',
+        desc: 'Kerb-, barrier- or verge-protected cycle track (Table 4-3 & Ch. 6.2)',
+        color: '#059669',
+        tone: 'success'
+      },
+      {
+        value: 'Stepped Cycle Track',
+        label: 'Stepped Cycle Track',
+        desc: 'Intermediate-height stepped track <=30 mph (Table 4-3)',
+        color: '#65a30d',
+        tone: 'success'
+      },
+      {
+        value: 'Shared-Use Path / Track',
+        label: 'Shared-Use Path / Track',
+        desc: 'Shared walking, equestrian & cycling path (Table 4-4 & Ch. 5.3)',
+        color: '#d97706',
+        tone: 'warning'
+      },
+      {
+        value: 'Light Segregation',
+        label: 'Light Segregation',
+        desc: 'Intermittent bollards, wands, or planters (Table 4-3)',
+        color: '#0d9488',
+        tone: 'success'
+      },
+      {
+        value: 'Cycle Lane (Mandatory / Advisory)',
+        label: 'Cycle Lane (Mandatory / Advisory)',
+        desc: 'On-carriageway cycle lane or centreline-removed lane (Ch. 6.4 & Table 4-3)',
+        color: '#ea580c',
+        tone: 'warning'
+      },
+      {
+        value: 'Quiet Lane / Country Lane',
+        label: 'Quiet Lane / Country Lane',
+        desc: 'Quiet Lane, BOAT, or <=20mph / rural <=30mph <1,000 vpd lane (Ch. 7 & Footnote 5)',
+        color: '#0284c7',
+        tone: 'civic'
+      },
+      {
+        value: 'Mixed Traffic Road',
+        label: 'Mixed Traffic Road',
+        desc: 'General carriageway mixed with motor traffic (Table 4-3)',
+        color: '#64748b',
+        tone: 'neutral'
+      },
+      {
+        value: 'No Cycling (Footpath / Steps)',
+        label: 'No Cycling (Footpath / Steps)',
+        desc: 'Public footpath, pedestrian-only footway or steps (Table 8.1)',
+        color: '#94a3b8',
+        tone: 'neutral'
+      }
+    ]
+  },
   infrastructure: {
     id: 'infrastructure',
     title: 'Infrastructure & Facility Type',
@@ -126,6 +264,13 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
         tone: 'success'
       },
       {
+        value: 'Bridleway / Rural Greenway',
+        label: 'Bridleway / Rural Greenway',
+        desc: 'Public Bridleway or Restricted Byway open to walkers, cyclists & horses',
+        color: '#15803d',
+        tone: 'success'
+      },
+      {
         value: 'Segregated Track (narrow)',
         label: 'Segregated Track (narrow)',
         desc: 'Protected cycleway < wide threshold',
@@ -133,9 +278,16 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
         tone: 'success'
       },
       {
+        value: 'Stepped Cycle Track',
+        label: 'Stepped Cycle Track',
+        desc: 'Intermediate-height stepped track beside carriageway',
+        color: '#84cc16',
+        tone: 'success'
+      },
+      {
         value: 'Light Segregation',
         label: 'Light Segregation',
-        desc: 'Stepped track, wands, bollards, or planters',
+        desc: 'Wands, bollards, planters, or light physical protection',
         color: '#0d9488',
         tone: 'success'
       },
@@ -152,6 +304,20 @@ export const SCHEMES: Record<ColorMode, ColorSchemeDef> = {
         desc: 'Dedicated footway or pedestrianised street',
         color: '#2563eb',
         tone: 'civic'
+      },
+      {
+        value: 'Virtual / Implied Footway',
+        label: 'Virtual / Implied Footway',
+        desc: 'Edge-marked rural carriageway footway',
+        color: '#0ea5e9',
+        tone: 'civic'
+      },
+      {
+        value: 'Quiet Lane / Country Lane',
+        label: 'Quiet Lane / Country Lane',
+        desc: 'Designated Quiet Lane, BOAT, or Home Zone',
+        color: '#22c55e',
+        tone: 'success'
       },
       {
         value: 'Shared Footway',
@@ -303,6 +469,7 @@ export function formatModeLabel(mode: TravelMode): string {
 }
 
 export function formatStandardLabel(std: DesignStandard): string {
+  if (std === 'rural2026') return 'ATE Rural Guide (2026)';
   return std === 'ltn120' ? 'England LTN 1/20' : 'Scotland CbD';
 }
 
@@ -342,6 +509,36 @@ export function buildLegendMetrics(
   if (mode === 'infrastructure' && summary) {
     return scheme.entries.map((e) => {
       const m = summary.infra_breakdown[e.value];
+      return {
+        value: e.value,
+        label: e.label,
+        desc: e.desc,
+        color: e.color,
+        km: m ? m.length_km : 0,
+        pct: m ? m.percentage : 0,
+        count: m ? m.count : 0
+      };
+    });
+  }
+
+  if (mode === 'walking_category' && summary) {
+    return scheme.entries.map((e) => {
+      const m = summary.walking_breakdown?.[e.value];
+      return {
+        value: e.value,
+        label: e.label,
+        desc: e.desc,
+        color: e.color,
+        km: m ? m.length_km : 0,
+        pct: m ? m.percentage : 0,
+        count: m ? m.count : 0
+      };
+    });
+  }
+
+  if (mode === 'cycling_category' && summary) {
+    return scheme.entries.map((e) => {
+      const m = summary.cycling_breakdown?.[e.value];
       return {
         value: e.value,
         label: e.label,

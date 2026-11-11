@@ -31,6 +31,11 @@
           <span class="map-badge {badgeTone}">{shortLos}</span>
           {#if feature.kind === 'segment'}
             <span class="map-badge civic">{feature.highway}</span>
+            {#if feature.prow_designation}
+              <span class="map-badge">{feature.prow_designation}</span>
+            {:else}
+              <span class="map-badge">{feature.is_urban ? 'Built-up' : 'Rural'}</span>
+            {/if}
           {:else}
             <span class="map-badge civic">Junction · {feature.arm_count} arms</span>
           {/if}
@@ -84,8 +89,16 @@
             <span class="attr-value">{feature.infrastructure}</span>
           </div>
           <div class="attr-item">
+            <span class="attr-label">Walking Category</span>
+            <span class="attr-value">{feature.walking_category || '—'}</span>
+          </div>
+          <div class="attr-item">
+            <span class="attr-label">Cycling Category</span>
+            <span class="attr-value">{feature.cycling_category || '—'}</span>
+          </div>
+          <div class="attr-item">
             <span class="attr-label">Surface / Lit</span>
-            <span class="attr-value">{feature.surface}{feature.is_lit ? ' · Lit' : ''}</span>
+            <span class="attr-value">{feature.rural_surface || feature.surface}{feature.is_lit ? ' · Lit' : ''}</span>
           </div>
           <div class="attr-item">
             <span class="attr-label">Separation</span>

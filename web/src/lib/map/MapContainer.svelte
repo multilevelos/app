@@ -278,11 +278,17 @@
           const shortLos = formatShortLosLabel(p.los_label, p.active_grade);
           const spdText =
             p.speed_limit_mph != null ? `${escapeHtml(p.speed_limit_mph)} mph` : 'Traffic-free';
+          const facilityBadge =
+            colorMode === 'walking_category'
+              ? p.walking_category || p.infrastructure
+              : colorMode === 'cycling_category'
+                ? p.cycling_category || p.infrastructure
+                : p.infrastructure;
           const html = `
             <div class="map-popup-card">
               <div class="map-badge-group">
                 <span class="map-badge ${tone}">${escapeHtml(shortLos)}</span>
-                <span class="map-badge">${escapeHtml(p.infrastructure)}</span>
+                <span class="map-badge">${escapeHtml(facilityBadge)}</span>
               </div>
               <div class="map-popup-title">${escapeHtml(p.name || 'Unnamed Street')}</div>
               <div class="map-popup-table">
@@ -379,6 +385,11 @@
           name: String(p.name || 'Unnamed Street'),
           highway: String(p.highway || 'road'),
           infrastructure: String(p.infrastructure || ''),
+          walking_category: String(p.walking_category || ''),
+          cycling_category: String(p.cycling_category || ''),
+          prow_designation: p.prow_designation ? String(p.prow_designation) : null,
+          rural_surface: String(p.rural_surface || 'Bound paved'),
+          is_urban: p.is_urban === true || p.is_urban === 'true',
           separation: String(p.separation || 'none'),
           surface: String(p.surface || 'Smooth paved'),
           width_m: p.width_m != null ? Number(p.width_m) : null,
@@ -407,16 +418,20 @@
 
         const tone = gradeTone(seg.active_grade);
         const shortLos = formatShortLosLabel(seg.los_label, seg.active_grade);
+        const prowBadge = seg.prow_designation
+          ? `<span class="map-badge">${escapeHtml(seg.prow_designation)}</span>`
+          : '';
         const html = `
           <div class="map-popup-card">
             <div class="map-badge-group">
               <span class="map-badge ${tone}">${escapeHtml(shortLos)}</span>
               <span class="map-badge civic">${escapeHtml(seg.highway)}</span>
+              ${prowBadge}
             </div>
             <div class="map-popup-title">${escapeHtml(seg.name)}</div>
             <div class="map-popup-table">
               <div class="map-cell"><span class="k">MMLoS / W / Wh / C</span><span class="v font-mono">${escapeHtml(seg.grade_multimodal)} · ${escapeHtml(seg.grade_walking)} · ${escapeHtml(seg.grade_wheeling)} · ${escapeHtml(seg.grade_cycling)}</span></div>
-              <div class="map-cell"><span class="k">Infrastructure</span><span class="v">${escapeHtml(seg.infrastructure)}</span></div>
+              <div class="map-cell"><span class="k">Walk / Cycle</span><span class="v">${escapeHtml(seg.walking_category)} · ${escapeHtml(seg.cycling_category)}</span></div>
               <div class="map-cell"><span class="k">Speed / Flow</span><span class="v font-mono">${seg.speed_limit_mph != null ? seg.speed_limit_mph + ' mph' : 'Traffic-free'}${seg.estimated_aadt != null ? ' · ' + seg.estimated_aadt.toLocaleString() + ' AADT' : ''}</span></div>
               <div class="map-cell"><span class="k">Length</span><span class="v font-mono">${seg.length_m} m</span></div>
             </div>

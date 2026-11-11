@@ -1,15 +1,19 @@
 use std::collections::HashMap;
 
-/// Infrastructure segregation & street facility types across LTN 1/20, CbD, Walking & Wheeling
+/// Infrastructure segregation & street facility types across LTN 1/20, ATE Rural Design Guide (2026), CbD, Walking & Wheeling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InfrastructureType {
     SegregatedTrackWide,
     OffRoadPath,
+    BridlewayGreenway,
     SegregatedTrackNarrow,
+    SteppedCycleTrack,
     LightSegregation,
     BusLane,
     SharedFootway,
     PedestrianFootway,
+    VirtualFootway,
+    QuietLane,
     PaintedCycleLane,
     MixedTrafficStreet,
     Steps,
@@ -20,11 +24,15 @@ impl InfrastructureType {
         match self {
             InfrastructureType::SegregatedTrackWide => "Segregated Track (wide)",
             InfrastructureType::OffRoadPath => "Off Road Path",
+            InfrastructureType::BridlewayGreenway => "Bridleway / Rural Greenway",
             InfrastructureType::SegregatedTrackNarrow => "Segregated Track (narrow)",
+            InfrastructureType::SteppedCycleTrack => "Stepped Cycle Track",
             InfrastructureType::LightSegregation => "Light Segregation",
             InfrastructureType::BusLane => "Bus / Shared Priority Lane",
             InfrastructureType::SharedFootway => "Shared Footway",
             InfrastructureType::PedestrianFootway => "Pedestrian Footway / Zone",
+            InfrastructureType::VirtualFootway => "Virtual / Implied Footway",
+            InfrastructureType::QuietLane => "Quiet Lane / Country Lane",
             InfrastructureType::PaintedCycleLane => "Painted Cycle Lane",
             InfrastructureType::MixedTrafficStreet => "Mixed Traffic Street",
             InfrastructureType::Steps => "Steps (Stepped Access)",
@@ -35,10 +43,14 @@ impl InfrastructureType {
         match self {
             InfrastructureType::SegregatedTrackWide => "#059669",
             InfrastructureType::OffRoadPath => "#16a34a",
+            InfrastructureType::BridlewayGreenway => "#15803d",
             InfrastructureType::SegregatedTrackNarrow => "#65a30d",
+            InfrastructureType::SteppedCycleTrack => "#84cc16",
             InfrastructureType::LightSegregation => "#0d9488",
             InfrastructureType::BusLane => "#0284c7",
             InfrastructureType::PedestrianFootway => "#2563eb",
+            InfrastructureType::VirtualFootway => "#0ea5e9",
+            InfrastructureType::QuietLane => "#22c55e",
             InfrastructureType::SharedFootway => "#d97706",
             InfrastructureType::PaintedCycleLane => "#ea580c",
             InfrastructureType::MixedTrafficStreet => "#64748b",
@@ -228,6 +240,41 @@ pub fn classify_cycle_infrastructure(
 ) -> InfrastructureType {
     if highway == "steps" {
         return InfrastructureType::Steps;
+    }
+
+    if let Some(prow) = crate::rural::extract_prow_designation(highway, tags) {
+        match prow {
+            crate::rural::ProwDesignation::PublicBridleway
+            | crate::rural::ProwDesignation::RestrictedByway => {
+                return InfrastructureType::BridlewayGreenway;
+            }
+            crate::rural::ProwDesignation::QuietLane
+            | crate::rural::ProwDesignation::BywayOpenToAllTraffic => {
+                return InfrastructureType::QuietLane;
+            }
+            crate::rural::ProwDesignation::PublicFootpath => {
+                let b = tags.get("bicycle").map(|s| s.as_str()).unwrap_or("");
+                if !matches!(b, "yes" | "designated" | "permissive") {
+                    return if distance_to_road_m > min_offroad_distance {
+                        InfrastructureType::OffRoadPath
+                    } else {
+                        InfrastructureType::PedestrianFootway
+                    };
+                }
+            }
+        }
+    }
+
+    if crate::rural::is_stepped_cycle_track(highway, tags) {
+        return InfrastructureType::SteppedCycleTrack;
+    }
+
+    if crate::rural::has_virtual_footway(tags) {
+        return InfrastructureType::VirtualFootway;
+    }
+
+    if highway == "living_street" {
+        return InfrastructureType::QuietLane;
     }
 
     let width_m = extract_width_m(tags);

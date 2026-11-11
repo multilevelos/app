@@ -33,6 +33,8 @@
     <label for="colorby-select">Colour by</label>
     <select id="colorby-select" bind:value={colorMode}>
       <option value="los">Level of Service (Grades A–E)</option>
+      <option value="walking_category">Walking categories (ATE Rural Guide)</option>
+      <option value="cycling_category">Cycling categories (ATE Rural Guide)</option>
       <option value="infrastructure">Infrastructure & facility</option>
       <option value="speed">Effective speed limit</option>
       <option value="traffic">Traffic volume (AADT)</option>

@@ -27,6 +27,7 @@ impl TravelMode {
 pub enum DesignStandard {
     #[default]
     Ltn120,
+    Rural2026,
     Cbd,
 }
 
@@ -34,6 +35,7 @@ impl DesignStandard {
     pub fn as_str(&self) -> &'static str {
         match self {
             DesignStandard::Ltn120 => "ltn120",
+            DesignStandard::Rural2026 => "rural2026",
             DesignStandard::Cbd => "cbd",
         }
     }

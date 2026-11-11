@@ -1,7 +1,7 @@
 import type { FeatureCollection } from 'geojson';
 
 export type TravelMode = 'multimodal' | 'walking' | 'wheeling' | 'cycling';
-export type DesignStandard = 'ltn120' | 'cbd';
+export type DesignStandard = 'ltn120' | 'rural2026' | 'cbd';
 
 export interface LosConfig {
   active_mode: TravelMode;
@@ -43,6 +43,8 @@ export interface SummaryStats {
   total_segments: number;
   los_breakdown: Record<string, CategoryMetric>;
   infra_breakdown: Record<string, CategoryMetric>;
+  walking_breakdown: Record<string, CategoryMetric>;
+  cycling_breakdown: Record<string, CategoryMetric>;
   high_med_pct: number;
   unsuitable_pct: number;
   average_speed_mph: number;
@@ -58,7 +60,13 @@ export interface LosAnalysisOutput {
   junctions_geojson: FeatureCollection;
 }
 
-export type ColorMode = 'los' | 'infrastructure' | 'speed' | 'traffic';
+export type ColorMode =
+  | 'los'
+  | 'walking_category'
+  | 'cycling_category'
+  | 'infrastructure'
+  | 'speed'
+  | 'traffic';
 export type ThemeMode = 'light' | 'dark';
 export type BasemapId = 'light' | 'dark' | 'voyager' | 'cyclosm' | 'satellite';
 
@@ -68,11 +76,16 @@ export interface SelectedSegment {
   name: string;
   highway: string;
   infrastructure: string;
+  walking_category: string;
+  cycling_category: string;
+  prow_designation: string | null;
+  rural_surface: string;
   separation: string;
   surface: string;
   width_m: number | null;
   incline_pct: number | null;
   is_lit: boolean;
+  is_urban: boolean;
   speed_limit_mph: number | null;
   speed_category: string;
   estimated_aadt: number | null;

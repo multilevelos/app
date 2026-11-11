@@ -361,6 +361,7 @@ fn build_classified_junction(
     let mut max_radius: f64 = 9.0;
     let mut max_speed: f64 = 10.0;
     let mut max_aadt: u32 = 0;
+    let mut max_lanes: u8 = 1;
     let mut is_roundabout = false;
     let mut has_signals = false;
     let mut has_marked = false;
@@ -388,6 +389,7 @@ fn build_classified_junction(
             if arm.is_motor {
                 max_speed = max_speed.max(arm.speed_mph);
                 max_aadt = max_aadt.max(arm.aadt);
+                max_lanes = max_lanes.max(arm.lanes);
             }
             if let Some(ref nm) = arm.name {
                 if !nm.is_empty() && !street_names.contains(nm) && street_names.len() < 2 {
@@ -430,28 +432,42 @@ fn build_classified_junction(
     };
 
     // Score Walking, Wheeling & Cycling Junction LoS (A–E)
-    let grade_walking = score_junction_walking(
-        max_speed,
-        max_aadt,
-        effective_arms,
-        is_roundabout,
-        has_signals,
-        has_marked,
-    );
-    let grade_wheeling = score_junction_wheeling(
-        grade_walking,
-        has_signals || has_marked,
-        has_tactile || has_lowered_kerb,
-        is_roundabout,
-    );
-    let grade_cycling = score_junction_cycling(
-        max_speed,
-        max_aadt,
-        effective_arms,
-        is_roundabout,
-        has_signals,
-        has_marked,
-    );
+    let (grade_walking, grade_wheeling, grade_cycling) =
+        if config.standard == crate::config::DesignStandard::Rural2026 {
+            crate::rural::score_rural_junction_grades(
+                max_speed,
+                max_aadt,
+                max_lanes,
+                is_roundabout,
+                has_signals,
+                has_marked,
+                has_tactile || has_lowered_kerb,
+            )
+        } else {
+            let gw = score_junction_walking(
+                max_speed,
+                max_aadt,
+                effective_arms,
+                is_roundabout,
+                has_signals,
+                has_marked,
+            );
+            let gwh = score_junction_wheeling(
+                gw,
+                has_signals || has_marked,
+                has_tactile || has_lowered_kerb,
+                is_roundabout,
+            );
+            let gc = score_junction_cycling(
+                max_speed,
+                max_aadt,
+                effective_arms,
+                is_roundabout,
+                has_signals,
+                has_marked,
+            );
+            (gw, gwh, gc)
+        };
 
     let min_g = grade_walking.min(grade_wheeling).min(grade_cycling).numeric_score();
     let avg_g = ((grade_walking.numeric_score()

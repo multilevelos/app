@@ -107,6 +107,11 @@
           const p = match.properties;
           selectedFeature = {
             ...selectedFeature,
+            walking_category: String(p.walking_category || ''),
+            cycling_category: String(p.cycling_category || ''),
+            prow_designation: p.prow_designation ? String(p.prow_designation) : null,
+            rural_surface: String(p.rural_surface || 'Bound paved'),
+            is_urban: p.is_urban === true || p.is_urban === 'true',
             grade_multimodal: String(p.grade_multimodal || 'C'),
             grade_walking: String(p.grade_walking || 'C'),
             grade_wheeling: String(p.grade_wheeling || 'C'),
@@ -189,11 +194,18 @@
     }
   });
 
-  async function loadPreset(preset: PresetLocation, preserveExistingHash = false) {
+  async function loadPreset(
+    preset: PresetLocation,
+    preserveExistingHash = false,
+    userClicked = false
+  ) {
     isLoading = true;
     selectedPresetId = preset.id;
     areaLabel = preset.name.split(' (')[0];
     selectedFeature = null;
+    if (preset.id === 'bakewell' && (userClicked || initialUrl.standard === undefined)) {
+      config.standard = 'rural2026';
+    }
     loadingMessage = `Loading ${preset.name}...`;
 
     try {
@@ -430,6 +442,12 @@
     for (const [key, val] of Object.entries(summary.infra_breakdown)) {
       csv += `"Infrastructure","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
     }
+    for (const [key, val] of Object.entries(summary.walking_breakdown ?? {})) {
+      csv += `"Walking Category (ATE Rural Guide)","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
+    }
+    for (const [key, val] of Object.entries(summary.cycling_breakdown ?? {})) {
+      csv += `"Cycling Category (ATE Rural Guide)","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
+    }
     csv += `\n"Cross-Modal Suitability","Multi-Modal (Grades A-B)",,${summary.mode_suitability.multimodal_ab_pct}%,\n`;
     csv += `"Cross-Modal Suitability","Walking (Grades A-B)",,${summary.mode_suitability.walking_ab_pct}%,\n`;
     csv += `"Cross-Modal Suitability","Wheeling (Grades A-B)",,${summary.mode_suitability.wheeling_ab_pct}%,\n`;
@@ -509,7 +527,7 @@
       onToggleLegendItem={handleToggleLegendItem}
       onIsolateLegendItem={handleIsolateLegendItem}
       onShowAllLegend={() => (hiddenValues = [])}
-      onSelectPreset={(p) => loadPreset(p, false)}
+      onSelectPreset={(p) => loadPreset(p, false, true)}
       onConfigChange={handleConfigChange}
       onResetConfig={handleResetConfig}
       onExportGeoJSON={handleExportGeoJSON}
