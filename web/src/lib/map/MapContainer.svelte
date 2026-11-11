@@ -37,46 +37,14 @@
   let hoveredFeatureId: string | number | null = null;
   let isTouchDevice = false;
 
-  // Split label-free base cartography + toggleable top-level place-name reference layer
-  function buildStyleSpec(id: BasemapId): maplibregl.StyleSpecification {
+  // Vector GL styles (CARTO MVT) + open keyless CyclOSM & Esri Satellite styles (zero watermarks / API keys)
+  function buildStyleSpec(id: BasemapId): string | maplibregl.StyleSpecification {
     if (id === 'dark') {
-      return {
-        version: 8,
-        sources: {
-          'basemap-base': {
-            type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png'],
-            tileSize: 256,
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-          },
-          'basemap-labels': {
-            type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}@2x.png'],
-            tileSize: 256
-          }
-        },
-        layers: [{ id: 'basemap-base-layer', type: 'raster', source: 'basemap-base' }]
-      };
+      return 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
     }
 
     if (id === 'voyager') {
-      return {
-        version: 8,
-        sources: {
-          'basemap-base': {
-            type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}@2x.png'],
-            tileSize: 256,
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-          },
-          'basemap-labels': {
-            type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png'],
-            tileSize: 256
-          }
-        },
-        layers: [{ id: 'basemap-base-layer', type: 'raster', source: 'basemap-base' }]
-      };
+      return 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
     }
 
     if (id === 'satellite') {
@@ -94,8 +62,11 @@
           },
           'basemap-labels': {
             type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}@2x.png'],
-            tileSize: 256
+            tiles: [
+              'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+            ],
+            tileSize: 256,
+            maxzoom: 19
           }
         },
         layers: [{ id: 'basemap-base-layer', type: 'raster', source: 'basemap-base' }]
@@ -131,24 +102,22 @@
       };
     }
 
-    // Default: 'light' Dignified Civic Light Canvas
-    return {
-      version: 8,
-      sources: {
-        'basemap-base': {
-          type: 'raster',
-          tiles: ['https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png'],
-          tileSize: 256,
-          attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-        },
-        'basemap-labels': {
-          type: 'raster',
-          tiles: ['https://basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}@2x.png'],
-          tileSize: 256
-        }
-      },
-      layers: [{ id: 'basemap-base-layer', type: 'raster', source: 'basemap-base' }]
-    };
+    // Default: 'light' Dignified Civic Light Vector Canvas (Positron GL)
+    return 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+  }
+
+  function applyPlaceNamesVisibility(show: boolean) {
+    if (!map || !map.isStyleLoaded()) return;
+    const vis = show ? 'visible' : 'none';
+    if (map.getLayer('basemap-labels-layer')) {
+      map.setLayoutProperty('basemap-labels-layer', 'visibility', vis);
+    }
+    const layers = map.getStyle()?.layers ?? [];
+    for (const l of layers) {
+      if (l.type === 'symbol' && !l.id.startsWith('los-')) {
+        map.setLayoutProperty(l.id, 'visibility', vis);
+      }
+    }
   }
 
   function getCasingColor(id: BasemapId): string {
@@ -316,6 +285,10 @@
   function initLayers() {
     if (!map || !map.isStyleLoaded()) return;
 
+    const firstSymbolId = map
+      .getStyle()
+      ?.layers?.find((l) => l.type === 'symbol' && !l.id.startsWith('los-'))?.id;
+
     if (!map.getSource('los-network')) {
       map.addSource('los-network', {
         type: 'geojson',
@@ -327,62 +300,68 @@
     const filterExpr = getFilterExpression(colorMode, hiddenValues);
 
     if (!map.getLayer('los-network-casing')) {
-      map.addLayer({
-        id: 'los-network-casing',
-        type: 'line',
-        source: 'los-network',
-        ...(filterExpr ? { filter: filterExpr } : {}),
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round'
+      map.addLayer(
+        {
+          id: 'los-network-casing',
+          type: 'line',
+          source: 'los-network',
+          ...(filterExpr ? { filter: filterExpr } : {}),
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round'
+          },
+          paint: {
+            'line-color': getCasingColor(basemap),
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              8,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 4.5, 2.2],
+              13,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 7.5, 4.8],
+              17,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 12.0, 8.6]
+            ],
+            'line-opacity': 0.88
+          }
         },
-        paint: {
-          'line-color': getCasingColor(basemap),
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            8,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 4.5, 2.2],
-            13,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 7.5, 4.8],
-            17,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 12.0, 8.6]
-          ],
-          'line-opacity': 0.88
-        }
-      });
+        firstSymbolId
+      );
     }
 
     if (!map.getLayer('los-network-lines')) {
-      map.addLayer({
-        id: 'los-network-lines',
-        type: 'line',
-        source: 'los-network',
-        ...(filterExpr ? { filter: filterExpr } : {}),
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round'
+      map.addLayer(
+        {
+          id: 'los-network-lines',
+          type: 'line',
+          source: 'los-network',
+          ...(filterExpr ? { filter: filterExpr } : {}),
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round'
+          },
+          paint: {
+            'line-color': getColorExpression(colorMode),
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              8,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 3.0, 1.4],
+              13,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 5.4, 3.3],
+              17,
+              ['case', ['boolean', ['feature-state', 'hover'], false], 9.0, 6.2]
+            ],
+            'line-opacity': 0.95
+          }
         },
-        paint: {
-          'line-color': getColorExpression(colorMode),
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            8,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 3.0, 1.4],
-            13,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 5.4, 3.3],
-            17,
-            ['case', ['boolean', ['feature-state', 'hover'], false], 9.0, 6.2]
-          ],
-          'line-opacity': 0.95
-        }
-      });
+        firstSymbolId
+      );
     }
 
-    // Place-names label layer sits ABOVE analyzed vector corridors
+    // Satellite raster label overlay
     if (map.getSource('basemap-labels') && !map.getLayer('basemap-labels-layer')) {
       map.addLayer({
         id: 'basemap-labels-layer',
@@ -396,6 +375,8 @@
         }
       });
     }
+
+    applyPlaceNamesVisibility(showPlaceNames);
   }
 
   function updateSource(data: FeatureCollection | null) {
@@ -450,9 +431,7 @@
 
   $effect(() => {
     const show = showPlaceNames;
-    if (map && map.isStyleLoaded() && map.getLayer('basemap-labels-layer')) {
-      map.setLayoutProperty('basemap-labels-layer', 'visibility', show ? 'visible' : 'none');
-    }
+    applyPlaceNamesVisibility(show);
   });
 
   export function flyToBounds(bbox: [number, number, number, number], skipIfHashPresent = false) {
