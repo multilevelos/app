@@ -1,27 +1,26 @@
 import type { SearchResult } from '../types';
 
 /**
- * Search places using OpenStreetMap Nominatim API
+ * Search places using OpenStreetMap Nominatim API with optional AbortSignal
  */
-export async function searchPlace(query: string): Promise<SearchResult[]> {
+export async function searchPlace(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
   if (!query || query.trim().length < 2) return [];
 
-  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+  const params = new URLSearchParams({
+    q: query.trim(),
+    format: 'jsonv2',
+    addressdetails: '1',
+    limit: '6',
+    'accept-language': 'en'
+  });
 
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Accept-Language': 'en',
-        'User-Agent': 'MultiLevelOS-Cycling-LoS-App'
-      }
-    });
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    signal
+  });
 
-    if (!response.ok) return [];
-
-    const data: SearchResult[] = await response.json();
-    return data;
-  } catch (e) {
-    console.error('Nominatim search failed:', e);
-    return [];
+  if (!response.ok) {
+    throw new Error(`Nominatim error (${response.status})`);
   }
+
+  return (await response.json()) as SearchResult[];
 }

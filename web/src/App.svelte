@@ -1,86 +1,156 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { FeatureCollection } from 'geojson';
-  import type { ColorMode, LosConfig, PresetLocation, SearchResult, SummaryStats } from './types';
+  import type {
+    BasemapId,
+    ColorMode,
+    LosConfig,
+    PresetLocation,
+    SearchResult,
+    SelectedSegment,
+    SummaryStats,
+    ThemeMode
+  } from './types';
   import { engineInstance, ensureWasmInitialized } from './lib/engine';
   import { fetchOsmNetworkForBbox, sanitizeBbox } from './lib/overpass';
-  import MapContainer from './lib/map/MapContainer.svelte';
+  import { buildLegendMetrics, PRESET_LOCATIONS, SCHEMES } from './lib/palette';
+  import { buildShareUrl, readUrlState, syncUrlStateDebounced } from './lib/urlState';
+  import Header from './lib/components/Header.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
-  import Legend from './lib/components/Legend.svelte';
+  import DetailPanel from './lib/components/DetailPanel.svelte';
+  import PrintLegend from './lib/components/PrintLegend.svelte';
+  import MapContainer from './lib/map/MapContainer.svelte';
 
-  let config = $state<LosConfig>(engineInstance.getDefaultConfig());
+  const initialUrl = readUrlState();
+  const isMobileInit = typeof window !== 'undefined' && window.innerWidth <= 768;
+
+  const baseConfig = engineInstance.getDefaultConfig();
+  if (initialUrl.trafficMultiplier !== undefined) {
+    baseConfig.traffic_multiplier = initialUrl.trafficMultiplier;
+  }
+  if (initialUrl.includeMixed !== undefined) {
+    baseConfig.include_mixed_traffic = initialUrl.includeMixed;
+  }
+  if (initialUrl.minOffroad !== undefined) {
+    baseConfig.min_offroad_distance = initialUrl.minOffroad;
+  }
+  if (initialUrl.minWide !== undefined) {
+    baseConfig.min_wide_width = initialUrl.minWide;
+  }
+
+  let config = $state<LosConfig>(baseConfig);
+
   let geojson = $state<FeatureCollection | null>(null);
   let summary = $state<SummaryStats | null>(null);
-  let colorMode = $state<ColorMode>('los');
+  let colorMode = $state<ColorMode>(initialUrl.colorMode ?? 'los');
+  let hiddenValues = $state<string[]>(initialUrl.hiddenValues ?? []);
+  let basemap = $state<BasemapId>(initialUrl.basemap ?? 'light');
+  let showPlaceNames = $state<boolean>(initialUrl.showPlaceNames ?? true);
+  let theme = $state<ThemeMode>(initialUrl.theme ?? 'light');
+  let sidebarOpen = $state<boolean>(initialUrl.sidebarOpen ?? !isMobileInit);
+  let printMode = $state<'legend' | 'clean' | null>(initialUrl.printMode ?? null);
+
+  let selectedPresetId = $state<string | null>(initialUrl.preset ?? 'edinburgh');
+  let areaLabel = $state<string>('Edinburgh');
+  let selectedSegment = $state<SelectedSegment | null>(null);
+
   let isLoading = $state(true);
   let loadingMessage = $state('Initializing WebAssembly engine...');
-  let rawOsmJson = $state<string | null>(null);
-  let notificationToast = $state<string | null>(null);
-  let toastTimeout: any = null;
+  let toast = $state<{ text: string; kind: 'ok' | 'error' } | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  let mapComponent: MapContainer;
+  let mapComponent = $state<MapContainer>();
 
-  function showToast(msg: string, durationMs: number = 4000) {
-    if (toastTimeout) clearTimeout(toastTimeout);
-    notificationToast = msg;
-    toastTimeout = setTimeout(() => {
-      notificationToast = null;
+  let legendRows = $derived(
+    buildLegendMetrics(colorMode, summary, geojson?.features ?? [])
+  );
+
+  function notify(text: string, kind: 'ok' | 'error' = 'ok', durationMs = 4200) {
+    if (toastTimer) clearTimeout(toastTimer);
+    toast = { text, kind };
+    toastTimer = setTimeout(() => {
+      toast = null;
     }, durationMs);
   }
 
+  // Keep <html data-theme="..."> synchronized
+  $effect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = theme;
+    }
+  });
+
+  // Clear hidden legend filters when switching colour mode so user isn't left with an empty map
+  let lastColorMode: ColorMode | null = null;
+  $effect(() => {
+    if (lastColorMode !== null && colorMode !== lastColorMode) {
+      hiddenValues = [];
+    }
+    lastColorMode = colorMode;
+  });
+
+  // Debounced URL state sync
+  $effect(() => {
+    syncUrlStateDebounced({
+      presetId: selectedPresetId,
+      colorMode,
+      hiddenValues,
+      basemap,
+      showPlaceNames,
+      theme,
+      sidebarOpen,
+      printMode,
+      config
+    });
+  });
+
   onMount(async () => {
+    const hadMapHash = window.location.hash.includes('map=');
     try {
       loadingMessage = 'Compiling WebAssembly modules...';
       await ensureWasmInitialized();
 
-      // Load Edinburgh default preset
-      await loadPreset({
-        id: 'edinburgh',
-        name: 'Edinburgh (City Centre)',
-        country: 'Scotland, UK',
-        description: 'Extensive 20mph network, off-road railway paths, and protected lanes.',
-        center: [-3.195, 55.952],
-        zoom: 14.5,
-        bbox: [-3.22, 55.94, -3.17, 55.965]
-      });
+      const startPreset =
+        PRESET_LOCATIONS.find((p) => p.id === selectedPresetId) ?? PRESET_LOCATIONS[0];
+      await loadPreset(startPreset, hadMapHash);
     } catch (err: any) {
       console.error('Initialization error:', err);
-      loadingMessage = `Error: ${err.message || err}`;
+      notify(`Engine initialization failed: ${err?.message || err}`, 'error', 6500);
     } finally {
       isLoading = false;
     }
   });
 
-  async function loadPreset(preset: PresetLocation) {
+  async function loadPreset(preset: PresetLocation, preserveExistingHash = false) {
     isLoading = true;
-    loadingMessage = `Loading ${preset.name} dataset...`;
+    selectedPresetId = preset.id;
+    areaLabel = preset.name.split(' (')[0];
+    selectedSegment = null;
+    loadingMessage = `Loading ${preset.name}...`;
 
     try {
       const base = import.meta.env.BASE_URL || './';
       const cleanBase = base.endsWith('/') ? base : `${base}/`;
       const response = await fetch(`${cleanBase}presets/${preset.id}.json`);
-
       if (!response.ok) {
-        throw new Error(`Failed to load preset: HTTP ${response.status}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const osmText = await response.text();
-      rawOsmJson = osmText;
-
-      loadingMessage = 'Processing road network & computing Level of Service...';
+      loadingMessage = 'Computing Level of Service in Rust WASM...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
       geojson = result.geojson;
       summary = result.summary;
 
-      if (mapComponent) {
-        mapComponent.flyToBounds(preset.bbox);
-      }
-      showToast(`Loaded ${preset.name}: ${result.segments_count} segments (${result.summary.total_length_km} km)`);
+      mapComponent?.flyToBounds(preset.bbox, preserveExistingHash);
+      notify(
+        `${preset.name}: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`
+      );
     } catch (err: any) {
-      console.error('Failed to load preset:', err);
-      alert(`Could not load preset ${preset.name}: ${err.message}`);
+      console.error('Preset load failed:', err);
+      notify(`Could not load ${preset.name}: ${err?.message || err}`, 'error', 6000);
     } finally {
       isLoading = false;
     }
@@ -99,27 +169,30 @@
     );
 
     isLoading = true;
-    loadingMessage = `Querying OpenStreetMap Overpass API for area [${minLat.toFixed(3)}, ${minLng.toFixed(3)}]...`;
+    selectedSegment = null;
+    loadingMessage = 'Downloading OpenStreetMap ways from Overpass...';
 
     try {
       const osmText = await fetchOsmNetworkForBbox(minLng, minLat, maxLng, maxLat);
-      rawOsmJson = osmText;
-
-      loadingMessage = 'Running Cycling by Design Level of Service analysis in Rust...';
+      loadingMessage = 'Running Level of Service analysis in Rust WASM...';
       await engineInstance.initFromOsmJson(osmText);
 
       const result = engineInstance.calculateLos(config);
       geojson = result.geojson;
       summary = result.summary;
+      selectedPresetId = null;
+      areaLabel = 'Live OSM View';
 
       if (result.segments_count === 0) {
-        alert('No highway/cycleway segments found in this area. Try zooming into a populated town or city.');
+        notify('No street or path segments found in this area. Zoom into a town or city.', 'error');
       } else {
-        showToast(`Fetched OSM data: ${result.segments_count} segments (${result.summary.total_length_km} km analyzed)`);
+        notify(
+          `Fetched live OSM: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`
+        );
       }
     } catch (err: any) {
       console.error('Fetch viewport error:', err);
-      alert(`Overpass download failed: ${err.message || err}. Please try again in a few seconds.`);
+      notify(`Overpass download failed: ${err?.message || err}`, 'error', 6000);
     } finally {
       isLoading = false;
     }
@@ -131,34 +204,29 @@
     const minLng = parseFloat(result.boundingbox[2]);
     const maxLng = parseFloat(result.boundingbox[3]);
 
-    const centerLng = parseFloat(result.lon);
-    const centerLat = parseFloat(result.lat);
-
     const [w, s, e, n] = sanitizeBbox(minLng, minLat, maxLng, maxLat, 0.05);
+    const placeName = result.display_name.split(',')[0].trim();
 
-    if (mapComponent) {
-      mapComponent.flyToBounds([w, s, e, n]);
-    }
-
+    mapComponent?.flyToBounds([w, s, e, n]);
     isLoading = true;
-    const name = result.display_name.split(',')[0];
-    loadingMessage = `Downloading OSM network for ${name}...`;
+    selectedSegment = null;
+    loadingMessage = `Downloading OSM network for ${placeName}...`;
 
     try {
       const osmText = await fetchOsmNetworkForBbox(w, s, e, n);
-      rawOsmJson = osmText;
-
-      loadingMessage = 'Computing Level of Service in Rust WebAssembly...';
+      loadingMessage = 'Computing Level of Service in Rust WASM...';
       await engineInstance.initFromOsmJson(osmText);
 
       const res = engineInstance.calculateLos(config);
       geojson = res.geojson;
       summary = res.summary;
+      selectedPresetId = null;
+      areaLabel = placeName;
 
-      showToast(`Loaded ${name}: ${res.segments_count} segments (${res.summary.total_length_km} km)`);
+      notify(`${placeName}: ${res.segments_count.toLocaleString()} links (${res.summary.total_length_km} km)`);
     } catch (err: any) {
       console.error('Search load error:', err);
-      alert(`Failed to fetch OSM data for ${name}: ${err.message}`);
+      notify(`Could not fetch OSM for ${placeName}: ${err?.message || err}`, 'error', 6000);
     } finally {
       isLoading = false;
     }
@@ -166,22 +234,23 @@
 
   async function handleFileUpload(file: File) {
     isLoading = true;
-    loadingMessage = `Reading ${file.name}...`;
+    selectedSegment = null;
+    loadingMessage = `Parsing ${file.name}...`;
 
     try {
       const osmText = await file.text();
-      rawOsmJson = osmText;
-
-      loadingMessage = 'Parsing OSM data & calculating Level of Service in Rust...';
       await engineInstance.initFromOsmJson(osmText);
-
       const result = engineInstance.calculateLos(config);
       geojson = result.geojson;
       summary = result.summary;
+      selectedPresetId = null;
+      areaLabel = file.name.replace(/\.(geo)?json$/i, '');
 
-      // Auto-fit to loaded geometry
-      if (geojson && geojson.features.length > 0 && mapComponent) {
-        let minX = 180, minY = 90, maxX = -180, maxY = -90;
+      if (geojson && geojson.features.length > 0) {
+        let minX = 180,
+          minY = 90,
+          maxX = -180,
+          maxY = -90;
         for (const f of geojson.features) {
           if (f.geometry && f.geometry.type === 'LineString') {
             for (const pt of f.geometry.coordinates) {
@@ -193,13 +262,13 @@
           }
         }
         if (minX <= maxX) {
-          mapComponent.flyToBounds([minX, minY, maxX, maxY]);
+          mapComponent?.flyToBounds([minX, minY, maxX, maxY]);
         }
       }
-      showToast(`Loaded ${file.name}: ${result.segments_count} segments (${result.summary.total_length_km} km)`);
+      notify(`Loaded ${file.name}: ${result.segments_count.toLocaleString()} links (${result.summary.total_length_km} km)`);
     } catch (err: any) {
-      console.error('File upload error:', err);
-      alert(`Invalid OSM file: ${err.message}`);
+      console.error('Upload error:', err);
+      notify(`Invalid Overpass JSON file: ${err?.message || err}`, 'error', 6000);
     } finally {
       isLoading = false;
     }
@@ -211,7 +280,7 @@
       const result = engineInstance.calculateLos(config);
       geojson = result.geojson;
       summary = result.summary;
-    } catch (err) {
+    } catch (err: any) {
       console.error('Recalculation error:', err);
     }
   }
@@ -219,18 +288,57 @@
   function handleResetConfig() {
     config = engineInstance.getDefaultConfig();
     handleConfigChange();
-    showToast('Reset parameters to Scottish Cycling by Design defaults');
+    notify('Reset traffic & geometry parameters to defaults');
+  }
+
+  function handleToggleLegendItem(value: string) {
+    if (hiddenValues.includes(value)) {
+      hiddenValues = hiddenValues.filter((v) => v !== value);
+    } else {
+      hiddenValues = [...hiddenValues, value];
+    }
+  }
+
+  function handleIsolateLegendItem(value: string) {
+    const allValues = SCHEMES[colorMode].entries.map((e) => e.value);
+    const others = allValues.filter((v) => v !== value);
+    // Clicking 'only' again when already isolated restores all
+    if (hiddenValues.length === others.length && !hiddenValues.includes(value)) {
+      hiddenValues = [];
+    } else {
+      hiddenValues = others;
+    }
+  }
+
+  function handleZoomToSegment(seg: SelectedSegment) {
+    if (seg.bbox) {
+      mapComponent?.flyToBounds(seg.bbox);
+    }
+  }
+
+  async function handleCopyShareLink() {
+    const url = buildShareUrl({
+      presetId: selectedPresetId,
+      colorMode,
+      hiddenValues,
+      basemap,
+      showPlaceNames,
+      theme,
+      sidebarOpen,
+      printMode,
+      config
+    });
+    await navigator.clipboard.writeText(url);
+    notify('Shareable view link copied to clipboard');
   }
 
   function handleExportGeoJSON() {
     if (!geojson) return;
-    const blob = new Blob([JSON.stringify(geojson, null, 2)], {
-      type: 'application/json'
-    });
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cycling_level_of_service_${new Date().toISOString().slice(0, 10)}.geojson`;
+    a.download = `multilevelos_${areaLabel.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.geojson`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -238,15 +346,12 @@
   function handleExportCSV() {
     if (!summary) return;
     let csv = 'Category_Type,Category_Name,Length_km,Percentage,Segments_Count\n';
-
     for (const [key, val] of Object.entries(summary.los_breakdown)) {
       csv += `"Level of Service","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
     }
-
     for (const [key, val] of Object.entries(summary.infra_breakdown)) {
       csv += `"Infrastructure","${key}",${val.length_km},${val.percentage}%,${val.count}\n`;
     }
-
     csv += `\n"Summary Metric","Total Analyzed Network Length",${summary.total_length_km},"km",${summary.total_segments}\n`;
     csv += `"Summary Metric","Suitable Network (High/Medium)",${summary.high_med_pct}%,,\n`;
     csv += `"Summary Metric","Unsuitable / Non-Compliant",${summary.unsuitable_pct}%,,\n`;
@@ -256,102 +361,171 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cycling_los_summary_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `multilevelos_summary_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.key === 'p' || e.key === 'P') {
+      printMode = printMode ? null : 'legend';
+    } else if (e.key === 'Escape') {
+      if (printMode) printMode = null;
+      else if (selectedSegment) selectedSegment = null;
+    }
+  }
 </script>
 
-<main class="app-layout">
-  <!-- Left Side Panel Controls -->
-  <Sidebar
-    bind:config
-    {summary}
-    bind:colorMode
-    {isLoading}
-    {loadingMessage}
-    onSelectPreset={loadPreset}
-    onSearchSelect={handleSearchSelect}
-    onConfigChange={handleConfigChange}
-    onResetConfig={handleResetConfig}
-    onExportGeoJSON={handleExportGeoJSON}
-    onExportCSV={handleExportCSV}
-    onFileUpload={handleFileUpload}
-  />
+<svelte:window onkeydown={handleGlobalKeydown} />
 
-  <!-- Main Map Canvas -->
-  <div class="map-section">
+{#if !printMode}
+  <Header
+    {sidebarOpen}
+    onToggleSidebar={() => (sidebarOpen = !sidebarOpen)}
+    {areaLabel}
+    {isLoading}
+    {basemap}
+    {showPlaceNames}
+    {theme}
+    onChangeBasemap={(b) => (basemap = b)}
+    onTogglePlaceNames={() => (showPlaceNames = !showPlaceNames)}
+    onToggleTheme={() => {
+      const next = theme === 'light' ? 'dark' : 'light';
+      theme = next;
+      if (next === 'dark' && basemap === 'light') basemap = 'dark';
+      else if (next === 'light' && basemap === 'dark') basemap = 'light';
+    }}
+    onSelectPlace={handleSearchSelect}
+    onFetchViewport={handleFetchViewport}
+    onEnterPrintView={() => (printMode = 'legend')}
+    onCopyShareLink={handleCopyShareLink}
+  />
+{/if}
+
+<main class="workspace">
+  {#if !printMode}
+    <Sidebar
+      open={sidebarOpen}
+      bind:config
+      {summary}
+      bind:colorMode
+      {legendRows}
+      {hiddenValues}
+      {selectedPresetId}
+      {isLoading}
+      {loadingMessage}
+      onCloseMobile={() => (sidebarOpen = false)}
+      onToggleLegendItem={handleToggleLegendItem}
+      onIsolateLegendItem={handleIsolateLegendItem}
+      onShowAllLegend={() => (hiddenValues = [])}
+      onSelectPreset={(p) => loadPreset(p, false)}
+      onConfigChange={handleConfigChange}
+      onResetConfig={handleResetConfig}
+      onExportGeoJSON={handleExportGeoJSON}
+      onExportCSV={handleExportCSV}
+      onFileUpload={handleFileUpload}
+    />
+  {/if}
+
+  <div class="map-stage">
     <MapContainer
       bind:this={mapComponent}
       {geojson}
       {colorMode}
-      {isLoading}
-      onFetchViewport={handleFetchViewport}
+      {hiddenValues}
+      {basemap}
+      {showPlaceNames}
+      sidebarOpen={!printMode && sidebarOpen}
+      onSelectSegment={(seg) => (selectedSegment = seg)}
     />
 
-    <!-- Floating Map Legend -->
-    <div class="legend-overlay">
-      <Legend {colorMode} />
-    </div>
+    {#if !printMode}
+      <DetailPanel
+        segment={selectedSegment}
+        onClose={() => (selectedSegment = null)}
+        onZoomTo={handleZoomToSegment}
+      />
+    {:else}
+      <PrintLegend
+        mode={printMode}
+        {areaLabel}
+        {colorMode}
+        rows={legendRows}
+        {hiddenValues}
+        {summary}
+        {config}
+        onChangeMode={(m) => (printMode = m)}
+        onDownloadPng={() =>
+          mapComponent?.exportPng(
+            `multilevelos_${areaLabel.toLowerCase().replace(/\s+/g, '_')}.png`
+          )}
+        onPrint={() => window.print()}
+        onExit={() => (printMode = null)}
+      />
+    {/if}
 
-    <!-- Notification Toast -->
-    {#if notificationToast}
-      <div class="toast-popup">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"/>
-        </svg>
-        <span>{notificationToast}</span>
+    {#if toast}
+      <div class="toast-banner panel-card" class:err={toast.kind === 'error'} role="status">
+        {#if toast.kind === 'error'}
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        {:else}
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        {/if}
+        <span>{toast.text}</span>
       </div>
     {/if}
   </div>
 </main>
 
 <style>
-  .app-layout {
-    display: flex;
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
-    background-color: var(--bg-main);
-  }
-
-  .map-section {
+  .workspace {
     position: relative;
     flex: 1;
-    height: 100%;
+    width: 100%;
+    min-height: 0;
     overflow: hidden;
   }
 
-  .legend-overlay {
-    position: absolute;
-    bottom: 24px;
-    left: 20px;
-    z-index: 10;
-    pointer-events: none;
+  .map-stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
   }
 
-  .toast-popup {
+  .toast-banner {
     position: absolute;
-    top: 16px;
-    right: 56px;
+    top: 14px;
+    right: 54px;
+    z-index: 45;
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(15, 23, 42, 0.92);
-    backdrop-filter: blur(10px);
-    border: 1px solid #16a34a;
-    color: #f8fafc;
-    padding: 8px 14px;
-    border-radius: 8px;
+    padding: 8px 13px;
     font-size: 12px;
-    font-weight: 500;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
-    z-index: 20;
-    animation: fadeIn 0.2s ease-out;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-left: 3px solid var(--accent-emerald);
+    max-width: min(420px, calc(100vw - 80px));
   }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-8px); }
-    to { opacity: 1; transform: translateY(0); }
+  .toast-banner svg {
+    color: var(--accent-emerald);
+    flex-shrink: 0;
+  }
+
+  .toast-banner.err {
+    border-left-color: var(--accent-rose);
+  }
+
+  .toast-banner.err svg {
+    color: var(--accent-rose);
   }
 </style>
