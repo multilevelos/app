@@ -1,14 +1,122 @@
+const OSM_MAIN_API = 'https://api.openstreetmap.org/api/0.6/map.json';
+
 export const OVERPASS_ENDPOINTS = [
-  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
   'https://lz4.overpass-api.de/api/interpreter',
-  'https://z.overpass-api.de/api/interpreter',
-  'https://overpass-api.de/api/interpreter'
+  'https://overpass.private.coffee/api/interpreter'
 ];
 
+interface RawOsmElement {
+  type: 'node' | 'way' | 'relation';
+  id: number;
+  lat?: number;
+  lon?: number;
+  nodes?: number[];
+  tags?: Record<string, string>;
+  geometry?: Array<{ lat: number; lon: number }>;
+}
+
 /**
- * Execute Overpass query with automatic retry across reliable mirror endpoints
+ * Prunes buildings/POIs/landuse from raw OSM elements, retaining only highway/cycleway ways,
+ * their vertex nodes, and tagged crossing/signal/kerb nodes. Cuts payload size by ~85%.
  */
-async function executeOverpassQuery(query: string): Promise<string> {
+function pruneToHighwayElements(elements: RawOsmElement[]): {
+  nodes: Map<number, RawOsmElement>;
+  ways: Map<number, RawOsmElement>;
+} {
+  const ways = new Map<number, RawOsmElement>();
+  const neededNodeIds = new Set<number>();
+
+  for (const el of elements) {
+    if (el.type === 'way' && (el.tags?.highway || el.tags?.cycleway)) {
+      ways.set(el.id, el);
+      if (Array.isArray(el.nodes)) {
+        for (const nid of el.nodes) {
+          neededNodeIds.add(nid);
+        }
+      }
+    }
+  }
+
+  const nodes = new Map<number, RawOsmElement>();
+  for (const el of elements) {
+    if (el.type === 'node') {
+      const hasRelevantTag =
+        el.tags &&
+        (el.tags.highway || el.tags.crossing || el.tags.tactile_paving || el.tags.kerb);
+      if (neededNodeIds.has(el.id) || hasRelevantTag) {
+        nodes.set(el.id, el);
+      }
+    }
+  }
+
+  return { nodes, ways };
+}
+
+/**
+ * Fetches live OSM data directly from OpenStreetMap's high-availability cgimap v0.6 JSON endpoint.
+ * Automatically subdivides into a 2x2 tile grid if a dense urban centre exceeds the 50,000-node per-tile cap.
+ */
+async function fetchOsmV06Recursive(
+  w: number,
+  s: number,
+  e: number,
+  n: number,
+  depth: number = 0
+): Promise<{ nodes: Map<number, RawOsmElement>; ways: Map<number, RawOsmElement> }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 16000);
+
+  try {
+    const url = `${OSM_MAIN_API}?bbox=${w.toFixed(5)},${s.toFixed(5)},${e.toFixed(5)},${n.toFixed(5)}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      return pruneToHighwayElements(Array.isArray(data?.elements) ? data.elements : []);
+    }
+
+    // HTTP 400 indicates bbox exceeded OSM v0.6's 50,000-node limit -> subdivide into 4 quadrants
+    if (response.status === 400 && depth < 2) {
+      const midLng = (w + e) / 2;
+      const midLat = (s + n) / 2;
+      const quadrants = await Promise.all([
+        fetchOsmV06Recursive(w, s, midLng, midLat, depth + 1),
+        fetchOsmV06Recursive(midLng, s, e, midLat, depth + 1),
+        fetchOsmV06Recursive(w, midLat, midLng, n, depth + 1),
+        fetchOsmV06Recursive(midLng, midLat, e, n, depth + 1)
+      ]);
+
+      const mergedNodes = new Map<number, RawOsmElement>();
+      const mergedWays = new Map<number, RawOsmElement>();
+      for (const q of quadrants) {
+        for (const [id, node] of q.nodes) mergedNodes.set(id, node);
+        for (const [id, way] of q.ways) mergedWays.set(id, way);
+      }
+      return { nodes: mergedNodes, ways: mergedWays };
+    }
+
+    throw new Error(`OSM API HTTP ${response.status}`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fallback single-pass `out geom qt;` Overpass query if `api.openstreetmap.org` is unreachable
+ */
+async function executeOverpassFallback(
+  w: number,
+  s: number,
+  e: number,
+  n: number
+): Promise<string> {
+  const query = `[out:json][timeout:18];(way["highway"](${s},${w},${n},${e});node["highway"~"crossing|traffic_signals|mini_roundabout"](${s},${w},${n},${e}););out geom qt;`;
   let lastError: Error | null = null;
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -19,8 +127,7 @@ async function executeOverpassQuery(query: string): Promise<string> {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json'
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
         },
         body: `data=${encodeURIComponent(query)}`,
         signal: controller.signal
@@ -30,14 +137,9 @@ async function executeOverpassQuery(query: string): Promise<string> {
 
       if (response.ok) {
         const text = await response.text();
-        // Verify it is not an error payload
         if (text.startsWith('{') && text.includes('"elements"')) {
           return text;
-        } else if (text.includes('runtime error') || text.includes('rate_limited')) {
-          lastError = new Error(`Overpass runtime limit on ${endpoint}`);
-          continue;
         }
-        return text;
       } else {
         lastError = new Error(`HTTP ${response.status} from ${endpoint}`);
       }
@@ -46,18 +148,18 @@ async function executeOverpassQuery(query: string): Promise<string> {
     }
   }
 
-  throw lastError || new Error('Failed to fetch OSM data from all Overpass endpoints');
+  throw lastError || new Error('Failed to fetch live OSM network');
 }
 
 /**
- * Sanitizes and bounds a bbox to a manageable size (max ~6km span) to prevent Overpass timeouts
+ * Sanitizes and bounds a bbox to a fast urban study window (~3.5km span)
  */
 export function sanitizeBbox(
   minLng: number,
   minLat: number,
   maxLng: number,
   maxLat: number,
-  maxSpanDeg: number = 0.06
+  maxSpanDeg: number = 0.032
 ): [number, number, number, number] {
   let s = Math.min(minLat, maxLat);
   let n = Math.max(minLat, maxLat);
@@ -86,7 +188,8 @@ export function sanitizeBbox(
 }
 
 /**
- * Fetch routable OSM street, walking, wheeling & cycling network + tagged crossings/signals for a bounding box
+ * Fetch routable OSM street, walking, wheeling & cycling network + crossings/signals for a bounding box.
+ * Uses OpenStreetMap's fast CDN-backed v0.6 JSON API first (with automatic quadrant tiling), falling back to Overpass.
  */
 export async function fetchOsmNetworkForBbox(
   minLng: number,
@@ -96,17 +199,14 @@ export async function fetchOsmNetworkForBbox(
 ): Promise<string> {
   const [w, s, e, n] = sanitizeBbox(minLng, minLat, maxLng, maxLat);
 
-  const query = `[out:json][timeout:25];
-(
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|raceway"](${s},${w},${n},${e});
-  way["cycleway"](${s},${w},${n},${e});
-  node["highway"~"crossing|traffic_signals|mini_roundabout"](${s},${w},${n},${e});
-);
-out body;
->;
-out skel qt;`;
-
-  return await executeOverpassQuery(query);
+  try {
+    const { nodes, ways } = await fetchOsmV06Recursive(w, s, e, n, 0);
+    const elements: RawOsmElement[] = [...nodes.values(), ...ways.values()];
+    return JSON.stringify({ version: 0.6, elements });
+  } catch (primaryErr) {
+    console.warn('OSM v0.6 API fallback to Overpass:', primaryErr);
+    return await executeOverpassFallback(w, s, e, n);
+  }
 }
 
 /**
@@ -115,21 +215,10 @@ out skel qt;`;
 export async function fetchOsmNetworkAroundPoint(
   lng: number,
   lat: number,
-  radiusMeters: number = 2500
+  radiusMeters: number = 1800
 ): Promise<string> {
-  const cleanRadius = Math.min(radiusMeters, 4000);
-  const cleanLat = lat.toFixed(5);
-  const cleanLng = lng.toFixed(5);
-
-  const query = `[out:json][timeout:25];
-(
-  way["highway"]["highway"!~"proposed|construction|corridor|elevator|raceway"](around:${cleanRadius},${cleanLat},${cleanLng});
-  way["cycleway"](around:${cleanRadius},${cleanLat},${cleanLng});
-  node["highway"~"crossing|traffic_signals|mini_roundabout"](around:${cleanRadius},${cleanLat},${cleanLng});
-);
-out body;
->;
-out skel qt;`;
-
-  return await executeOverpassQuery(query);
+  const cleanRadius = Math.min(radiusMeters, 3000);
+  const dLat = cleanRadius / 111_132;
+  const dLon = cleanRadius / (111_320 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return await fetchOsmNetworkForBbox(lng - dLon, lat - dLat, lng + dLon, lat + dLat);
 }

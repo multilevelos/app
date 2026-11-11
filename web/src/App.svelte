@@ -237,7 +237,7 @@
 
     isLoading = true;
     selectedFeature = null;
-    loadingMessage = 'Downloading OpenStreetMap ways & crossings from Overpass...';
+    loadingMessage = 'Downloading live OpenStreetMap network...';
 
     try {
       const osmText = await fetchOsmNetworkForBbox(minLng, minLat, maxLng, maxLat);
@@ -258,7 +258,7 @@
       }
     } catch (err: any) {
       console.error('Fetch viewport error:', err);
-      notify(`Overpass download failed: ${err?.message || err}`, 'error', 6000);
+      notify(`OSM download failed: ${err?.message || err}`, 'error', 6000);
     } finally {
       isLoading = false;
     }
